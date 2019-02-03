@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>mofokom</groupId>
+    <artifactId>rvn</artifactId>
+    <packaging>jar</packaging>
+    <version xmlns:mvn="http://maven.apache.org/POM/4.0.0">1.0-SNAPSHOT</version>
+    <name>rvn4mvn</name>
+    <url xmlns:mvn="http://maven.apache.org/POM/4.0.0">http://www.mofokom.biz/site/${groupId}/${artifactId}/</url>
+
+    <build>
+        <defaultGoal>install</defaultGoal>
+        <plugins>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>package</id>
+                        <phase>package</phase>
+                    </execution>
+                </executions>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>rvn.Rvn</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    <distributionManagement xmlns:mvn="http://maven.apache.org/POM/4.0.0">
+        <snapshotRepository>
+            <id>mofokom-public</id>
+            <name>mofokom-public</name>
+            <url>http://www.mofokom.biz/maven/snapshots-public</url>
+            <uniqueVersion>false</uniqueVersion>
+        </snapshotRepository>
+        <repository>
+            <id>mofokom-public</id>
+            <name>mofokom-public</name>
+            <url>http://www.mofokom.biz/maven/release-public</url>
+            <uniqueVersion>false</uniqueVersion>
+        </repository>
+        <site>
+            <id>mofokom</id>
+            <url>scp://${site.url}/${project.groupId}/${artifactId}</url>
+        </site>
+    </distributionManagement>
+    <properties>
+        <maven.compiler.source>9</maven.compiler.source>
+        <maven.compiler.target>9</maven.compiler.target>
+    </properties>
+
+</project>
