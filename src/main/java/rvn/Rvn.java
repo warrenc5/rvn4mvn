@@ -226,7 +226,7 @@ public class Rvn extends Thread {
         watchSet = new ArrayList(this.keyPath.values());
         Collections.sort(watchSet);
         logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
-
+        logger.info(String.format("%1$s builds %2$s project %3$s keys",buildPaths.size(),projects.size(),keys.size()));
     }
 
     @Override
