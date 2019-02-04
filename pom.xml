@@ -31,6 +31,7 @@
             </plugin>
         </plugins>
     </build>
+
     <distributionManagement xmlns:mvn="http://maven.apache.org/POM/4.0.0">
         <snapshotRepository>
             <id>mofokom-public</id>

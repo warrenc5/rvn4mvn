@@ -28,9 +28,11 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,6 +41,12 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
@@ -68,11 +76,12 @@ import org.xml.sax.SAXException;
  */
 public class Rvn extends Thread {
 
-    private static List<String> locations;
+    private static Set<String> locations;
     private Set<WatchKey> keys;
     private Map<WatchKey, Path> keyPath;
-    private Map<NVV, Path> buildSet;
-    private final Map<NVV, Set<NVV>> projects;
+    private Map<NVV, Path> buildArtifact;
+    private Map<Path, NVV> buildPaths;
+    private Map<NVV, Set<NVV>> projects;
     private Map<Path, Process> processMap;
 
     private Map<String, String> commands;
@@ -90,25 +99,35 @@ public class Rvn extends Thread {
 
     private Map<Path, String> hashes;
     private final WatchService watcher;
+    private Path config;
 
     public static void main(String[] args) throws Exception {
         Rvn rvn = new Rvn();
-        rvn.locations.addAll(0, Arrays.asList(args));
-
+        rvn.locations.addAll(Arrays.asList(args));
         rvn.start();
         rvn.processStdIn();
         System.out.println(String.format("exited"));
-
     }
 
     public Rvn() throws Exception {
-        locations = new ArrayList<>();
+        watcher = FileSystems.getDefault().newWatchService();
+        try {
+            md = MessageDigest.getInstance("SHA-1");
+        } catch (NoSuchAlgorithmException e) {
+            logger.warning(e.getMessage());
+        }
+
+        init();
+    }
+
+    public void init() throws Exception {
+        locations = new LinkedHashSet<>();
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
-        watcher = FileSystems.getDefault().newWatchService();
         projects = new HashMap<>();
-        buildSet = new HashMap<>();
-        processMap = new HashMap<>();
+        buildArtifact = new LinkedHashMap<>();
+        buildPaths = new LinkedHashMap<>();
+        processMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
         matchFileIncludes = new ArrayList<>();
@@ -119,12 +138,6 @@ public class Rvn extends Thread {
         matchArtifactExcludes = new ArrayList<>();
 
         loadConfiguration();
-
-        try {
-            md = MessageDigest.getInstance("SHA-1");
-        } catch (NoSuchAlgorithmException e) {
-            logger.warning(e.getMessage());
-        }
 
     }
 
@@ -157,20 +170,20 @@ public class Rvn extends Thread {
     }
 
     public void registerPath(Path path) {
-
         try {
-
             if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
                     stream.filter(child -> matchDirectories(child) || matchFiles(child)).forEach(this::registerPath);
                 }
             } else if (path.toFile().toString().endsWith(".pom")) {
+                watchRecursively(path.getParent().getParent());
                 processPom(path);
             } else if (path.endsWith("pom.xml")) {
-                processPom(path);
-
-                Path parent = path.getParent();
-                watchRecursively(parent);
+                boolean skipped = !processPom(path);
+                if (!skipped) {
+                    Path parent = path.getParent();
+                    watchRecursively(parent);
+                }
             } else {
 
             }
@@ -201,18 +214,24 @@ public class Rvn extends Thread {
         } catch (IOException x) {
             System.err.println(x);
         }
+    }
+
+    public void scan() {
+        Instant then = Instant.now();
+        locations.stream().forEach(this::registerPath);
+        Duration duration = Duration.between(then, Instant.now());
+
+        logger.fine("buildSet :" + buildPaths.toString().replace(',', '\n'));
+        ArrayList watchSet;
+        watchSet = new ArrayList(this.keyPath.values());
+        Collections.sort(watchSet);
+        logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
 
     }
 
     @Override
     public void run() {
-        Instant then = Instant.now();
-        locations.stream().forEach(this::registerPath);
-        Duration duration = Duration.between(then, Instant.now());
-
-        logger.info(String.format("started %1$s", duration));
-        logger.info(String.format("keys %1$s", this.keys.size()));
-
+        scan();
         while (this.isAlive()) {
             logger.info(String.format("waiting.."));
             WatchKey key;
@@ -233,7 +252,25 @@ public class Rvn extends Thread {
 
                         WatchEvent<Path> ev = (WatchEvent<Path>) event;
                         Path filename = ev.context();
+
+                        if (!keyPath.containsKey(key)) {
+                            continue;
+                        }
                         Path child = keyPath.get(key).resolve(filename);
+
+                        if (child.equals(config)) {
+                            try {
+                                logger.info("config changed " + filename);
+                                keys.forEach(k -> k.cancel());
+                                this.init();
+                                this.loadConfiguration();
+                                this.scan();
+                            } catch (Throwable ex) {
+                                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                            }
+                            continue;
+                        }
+
                         logger.fine(String.format("kind %1$s %2$s %3$d", ev.kind(), child, key.hashCode()));
 
                         if (kind == ENTRY_DELETE) {
@@ -241,23 +278,27 @@ public class Rvn extends Thread {
                             if (cancelKey.isPresent()) {
                                 cancelKey.get().cancel();
                             }
+
                         } else if (kind == ENTRY_CREATE) {
                             this.registerPath(child);
                         } else if (kind == ENTRY_MODIFY) {
                             processPath(child);
                         }
                     } catch (Exception ex) {
-                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
                     }
                 }
+
+            } catch (Throwable ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
             } finally {
 
                 boolean valid = key.reset();
                 if (!valid) {
-                    break;
                 }
             }
         }
+
         logger.info(String.format("outrun"));
     }
 
@@ -293,19 +334,42 @@ public class Rvn extends Thread {
             return;
         }
 
-        if (hashes.containsKey(path) && toSHA1(path).equals(hashes.get(path))) {
+        boolean skipHash = !path.endsWith("pom.xml");
+
+        if (!skipHash && hashes.containsKey(path) && toSHA1(path).equals(hashes.get(path))) {
+            logger.info("no change detected" + path);
             return;
         }
+
+        if (path.toString().endsWith(".pom")) {
+            Document pom = this.loadPom(path);
+            NVV nvv = this.nvvFrom(pom);
+            this.nvvParent(nvv, pom);
+
+            logger.info(String.format("nvv: %1$s %2$s", path, nvv));
+            if (matchNVV(nvv)) {
+                this.buildDeps(nvv, path);
+            }
+            return;
+
+        }
+
         try {
             NVV nvv = findPom(path);
+            if (nvv == null) {
+                logger.fine(String.format("no nvv: %1$s", path));
+                return;
+            } else {
+                logger.info(String.format("nvv: %1$s %2$s", path, nvv));
+            }
+
             if (matchNVV(nvv)) {
-                processChange(nvv, buildSet.get(nvv));
+                processChange(nvv, buildArtifact.get(nvv));
             }
         } catch (Exception x) {
             logger.warning(String.format("process: %1$s - %2$s", path, x.getMessage()));
             x.printStackTrace();
         }
-
     }
 
     private Document loadPom(Path path) throws SAXException, XPathExpressionException, IOException, ParserConfigurationException {
@@ -315,12 +379,23 @@ public class Rvn extends Thread {
         return xmlDocument;
     }
 
-    private void processPom(Path path) throws SAXException, XPathExpressionException, IOException, ParserConfigurationException {
+    private boolean processPom(Path path) throws SAXException, XPathExpressionException, IOException, ParserConfigurationException {
         Document xmlDocument = loadPom(path);
-        XPath xPath = XPathFactory.newInstance().newXPath();
-        Node project = (Node) xPath.compile("/project").evaluate(xmlDocument, XPathConstants.NODE);
-        NVV nvv = nvvFrom(project);
-        buildSet.put(nvv, path);
+
+        NVV nvv = nvvFrom(xmlDocument);
+        if (!matchNVV(nvv)) {
+            return false;
+        }
+
+        if (path.endsWith("pom.xml")) {
+            Path oldPath = buildArtifact.put(nvv, path);
+            if (oldPath != null) {
+                logger.warning(String.format("%1$s replaces %2$s", path, oldPath));
+            }
+
+            buildPaths.put(path, nvv);
+        }
+
         hashes.put(path, this.toSHA1(path));
 
         NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
@@ -328,24 +403,15 @@ public class Rvn extends Thread {
         Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(), Spliterator.ORDERED | Spliterator.NONNULL);
         Set<NVV> deps = StreamSupport.stream(splt, true).map(this::processDependency).filter(this::matchNVV).collect(Collectors.toSet());
 
-        try {
-            Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
-            NVV parentNvv = nvvFrom(parent);
+        NVV parentNvv = nvvParent(nvv, xmlDocument);
 
-            if (nvv.vendor.isEmpty()) {
-                nvv.vendor = parentNvv.vendor;
-            }
-            if (nvv.version.isEmpty()) {
-                nvv.version = parentNvv.version;
-            }
-
+        if (!Objects.isNull(parentNvv)) {
             deps.add(parentNvv);
-            logger.fine(String.format("with parent %1$s", nvv.toString()));
-        } catch (Exception e) {
-
         }
+
         logger.fine(String.format("tracking %1$s %2$s", nvv.toString(), path));
         projects.put(nvv, deps);
+        return true;
     }
 
     private NVV processDependency(Node n) {
@@ -359,8 +425,36 @@ public class Rvn extends Thread {
         return null;
     }
 
+    private NVV nvvParent(NVV nvv, Document xmlDocument) {
+        NVV parentNvv = null;
+        try {
+            Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
+            parentNvv = nvvFrom(parent);
+
+            if (nvv.vendor.isEmpty()) {
+                nvv.vendor = parentNvv.vendor;
+            }
+            if (nvv.version.isEmpty()) {
+                nvv.version = parentNvv.version;
+            }
+            logger.fine(String.format("with parent %1$s", nvv.toString()));
+        } catch (Exception e) {
+        }
+        return parentNvv;
+    }
+
+    private NVV nvvFrom(Document xmlDocument) throws XPathExpressionException {
+
+        Node project = (Node) xPath.compile("/project").evaluate(xmlDocument, XPathConstants.NODE);
+
+        NVV nvv = nvvFrom(project);
+
+        return nvv;
+    }
+
+    XPath xPath = XPathFactory.newInstance().newXPath();
+
     private NVV nvvFrom(Node context) throws XPathExpressionException {
-        XPath xPath = XPathFactory.newInstance().newXPath();
         return new NVV(
                 xPath.compile("artifactId").evaluate(context),
                 xPath.compile("groupId").evaluate(context),
@@ -373,17 +467,20 @@ public class Rvn extends Thread {
 
         hashes.remove(path);
 
-        Path dir = buildSet.get(nvv);
+        Path dir = buildArtifact.get(nvv);
 
         if (dir == null) {
             return;
         }
 
         if (dir.endsWith("pom.xml")) {
-            if (!doBuild(nvv, path)) {
-                throw new RuntimeException(String.format("%1$s failed", nvv));
+            try {
+                if (!doBuild(nvv, path).get()) {
+                    throw new RuntimeException(String.format("%1$s failed", nvv));
+                }
+            } catch (InterruptedException | ExecutionException ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
             }
-
         }
 
         try {
@@ -392,15 +489,18 @@ public class Rvn extends Thread {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
         }
 
+        //buildDeps(nvv, path);
+    }
+
+    private void buildDeps(NVV nvv, Path path) {
         try {
             this.projects.entrySet().stream()
                     .filter(e -> e.getValue().stream()
                     .filter(nvv2 -> nvv2.equals(nvv)).findAny().isPresent())
-                    .forEach(e -> processChange(e.getKey(), this.buildSet.get(e.getKey())));
+                    .forEach(e -> processChange(e.getKey(), this.buildArtifact.get(e.getKey())));
         } catch (RuntimeException x) {
             logger.warning(String.format("%1$s %2$s %3$s", nvv.toString(), path, x.getMessage()));
         }
-        //}
     }
 
     private boolean matchFiles(Path path) {
@@ -418,7 +518,10 @@ public class Rvn extends Thread {
                 && !matchArtifactExcludes.stream().filter(s -> nvv.toString().matches(s)).findFirst().isPresent(); //FIXME: absolutely
     }
 
-    private boolean doBuild(NVV nvv, Path path) {
+    ExecutorService executor = new ScheduledThreadPoolExecutor(5);
+
+    private Future<Boolean> doBuild(NVV nvv, Path path) {
+        CompletableFuture<Boolean> result = new CompletableFuture<Boolean>();
         if (processMap.containsKey(path)) {
             logger.info(String.format("already building %1$s", nvv));
             processMap.get(path).destroyForcibly();
@@ -428,25 +531,31 @@ public class Rvn extends Thread {
         logger.info(String.format("build %1$s %2$s", nvv, command));
 
         if (command.isEmpty()) {
-            return true;
+            result.complete(Boolean.FALSE);
+            return result;
         }
 
-        try {
-            ProcessBuilder pb = new ProcessBuilder()
-                    .command(command.split(" "))
-                    .inheritIO();
-            Process p = pb.start();
-            processMap.put(path, p);
-            p.waitFor(1, TimeUnit.MINUTES);
-            processMap.remove(path);
+        return executor.submit(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                try {
+                    ProcessBuilder pb = new ProcessBuilder()
+                            .command(command.split(" "))
+                            .inheritIO();
+                    Process p = pb.start();
+                    processMap.put(path, p);
+                    p.waitFor(1, TimeUnit.MINUTES);
+                    processMap.remove(path);
 
-            logger.info(String.format("exit %1$s %2$s", nvv, p.exitValue()));
-            return p.exitValue() == 0;
+                    logger.info(String.format("exit %1$s %2$s", nvv, p.exitValue()));
+                    return p.exitValue() == 0;
 
-        } catch (IOException | InterruptedException ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        return false;
+                } catch (IOException | InterruptedException ex) {
+                    Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                }
+                return false;
+            }
+        });
     }
 
     private String locateCommand(NVV nvv, Path path) {
@@ -455,19 +564,48 @@ public class Rvn extends Thread {
     }
 
     private boolean isPom(Path path) {
-        return Arrays.asList(new String[]{".*pom.xml", ".*.pom$"})
+        return Arrays.asList(new String[]{".*\\/pom.xml$", ".*.pom$"})
                 .stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst().isPresent(); //FIXME: absolutely
     }
 
-    private NVV findPom(Path path) throws Exception {
-        return buildSet.entrySet().stream().filter(e
-                -> isBasePath(e.getValue(), path)).reduce(null, (e1, e2)
-                -> (e1 != null && e1.getValue().getNameCount() > e2.getValue().getNameCount()) ? e1 : e2).getKey();
+    private synchronized NVV findPom(Path path) throws Exception {
+
+        //    return buildPaths.get(path);
+        List<Map.Entry<NVV, Path>> base = buildArtifact.entrySet().stream()
+                .filter(e -> isBasePath(e.getValue(), path)
+                ).collect(Collectors.toList());
+
+        logger.fine("base: " + base.toString());
+
+        Optional<Map.Entry<NVV, Path>> nvv = base.stream()
+                .reduce((e1, e2) -> {
+                    return (e1 != null && e1.getValue().getNameCount() >= e2.getValue().getNameCount()) ? e1 : e2;
+                });
+
+        if (nvv.isPresent()) {
+            return nvv.get().getKey();
+        } else {
+            return null;
+        }
         //map(e -> e.getKey()).reducefindFirst().orElseThrow(() -> new Exception("not known " + path));
     }
 
+    private Path findPath(String name, String vendor, String version) {
+        Path path = buildArtifact.get(new NVV(name, vendor, version));
+        return path;
+    }
+
     private boolean isBasePath(Path project, Path changed) {
-        return (changed.startsWith(project.getParent()));
+        Path parent = project.getParent();
+        boolean base = false;
+
+        if (changed.endsWith(project)) {
+            base = true;
+        } else if ((changed.toString().startsWith(parent.toString()))) {
+            base = true;
+        }
+        logger.finest(changed + " " + parent + " " + base);
+        return base;
     }
 
     static {
@@ -486,7 +624,7 @@ public class Rvn extends Thread {
 
     private void loadConfiguration() throws IOException, ScriptException, URISyntaxException {
         URL configURL = Rvn.class.getResource("/rvn.json");
-        Path config = null;
+        config = null;
 
         logger.info(String.format("trying configuration %1$s", configURL));
 
@@ -504,10 +642,12 @@ public class Rvn extends Thread {
                 }
                 logger.info(String.format("written new configuration to %1$s", config));
             }
+
         } else {
             config = Paths.get(configURL.toURI());
         }
 
+        this.watch(config.getParent());
         logger.info(String.format("loading configuration %1$s", config));
 
         Reader scriptReader = Files.newBufferedReader(config);
@@ -574,16 +714,23 @@ public class Rvn extends Thread {
         return engine;
 
     }
+
 }
 
 class NVV {
 
     public String name, vendor, version;
+    public Path path;
 
     public NVV(String name, String vendor, String version) {
+        this(name, vendor, version, null);
+    }
+
+    public NVV(String name, String vendor, String version, Path path) {
         this.name = name;
         this.vendor = vendor;
         this.version = version;
+        this.path = path;
     }
 
     @Override
@@ -594,9 +741,8 @@ class NVV {
     @Override
     public int hashCode() {
         int hash = 3;
-        hash = 67 * hash + Objects.hashCode(this.name);
-        hash = 67 * hash + Objects.hashCode(this.vendor);
-        hash = 67 * hash + Objects.hashCode(this.version);
+        hash = 61 * hash + Objects.hashCode(this.name);
+        hash = 61 * hash + Objects.hashCode(this.vendor);
         return hash;
     }
 
@@ -619,7 +765,6 @@ class NVV {
             return false;
         }
         return true;
-
     }
 
 }
