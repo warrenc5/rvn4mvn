@@ -31,7 +31,15 @@
             </plugin>
         </plugins>
     </build>
-
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+            <scope>test</scope>
+            <type>jar</type>
+        </dependency>
+    </dependencies>
     <distributionManagement xmlns:mvn="http://maven.apache.org/POM/4.0.0">
         <snapshotRepository>
             <id>mofokom-public</id>

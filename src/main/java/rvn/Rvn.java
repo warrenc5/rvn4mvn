@@ -41,11 +41,9 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -118,6 +116,7 @@ public class Rvn extends Thread {
         }
 
         init();
+        new BuildIt().start();
     }
 
     public void init() throws Exception {
@@ -226,7 +225,7 @@ public class Rvn extends Thread {
         watchSet = new ArrayList(this.keyPath.values());
         Collections.sort(watchSet);
         logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
-
+        logger.info(String.format("%1$s builds %2$s project %3$s keys", buildPaths.size(), projects.size(), keys.size()));
     }
 
     @Override
@@ -347,8 +346,9 @@ public class Rvn extends Thread {
             this.nvvParent(nvv, pom);
 
             logger.info(String.format("nvv: %1$s %2$s", path, nvv));
+
             if (matchNVV(nvv)) {
-                this.buildDeps(nvv, path);
+                this.buildDeps(nvv);
             }
             return;
 
@@ -465,41 +465,25 @@ public class Rvn extends Thread {
     private void processChange(NVV nvv, Path path) {
         logger.info(String.format("changed %1$s %2$s", nvv.toString(), path));
 
-        hashes.remove(path);
-
-        Path dir = buildArtifact.get(nvv);
-
-        if (dir == null) {
-            return;
-        }
-
-        if (dir.endsWith("pom.xml")) {
-            try {
-                if (!doBuild(nvv, path).get()) {
-                    throw new RuntimeException(String.format("%1$s failed", nvv));
-                }
-            } catch (InterruptedException | ExecutionException ex) {
-                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
-
         try {
             hashes.put(path, this.toSHA1(path));
         } catch (IOException ex) {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
         }
 
-        //buildDeps(nvv, path);
+        qBuild(nvv, nvv);
+        buildDeps(nvv);
+
     }
 
-    private void buildDeps(NVV nvv, Path path) {
+    private void buildDeps(NVV nvv) {
         try {
             this.projects.entrySet().stream()
                     .filter(e -> e.getValue().stream()
                     .filter(nvv2 -> nvv2.equals(nvv)).findAny().isPresent())
-                    .forEach(e -> processChange(e.getKey(), this.buildArtifact.get(e.getKey())));
+                    .forEach(e -> qBuild(nvv, e.getKey()));
         } catch (RuntimeException x) {
-            logger.warning(String.format("%1$s %2$s %3$s", nvv.toString(), path, x.getMessage()));
+            logger.warning(String.format("%1$s %2$s", nvv.toString(), x.getMessage()));
         }
     }
 
@@ -520,42 +504,117 @@ public class Rvn extends Thread {
 
     ExecutorService executor = new ScheduledThreadPoolExecutor(5);
 
-    private Future<Boolean> doBuild(NVV nvv, Path path) {
-        CompletableFuture<Boolean> result = new CompletableFuture<Boolean>();
-        if (processMap.containsKey(path)) {
-            logger.info(String.format("already building %1$s", nvv));
-            processMap.get(path).destroyForcibly();
+    private void qBuild(NVV nvv, NVV next) {
+        Path dir = buildArtifact.get(nvv);
+
+        if (!dir.endsWith("pom.xml")) {
+            return;
         }
 
-        String command = locateCommand(nvv, path);
-        logger.info(String.format("build %1$s %2$s", nvv, command));
+        Edge edge = new Edge(nvv, next);
+        q.insert(edge);
 
-        if (command.isEmpty()) {
-            result.complete(Boolean.FALSE);
-            return result;
+        if (!next.equals(nvv)) {
+            buildDeps(next);
         }
+        //System.out.println(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
+    }
 
-        return executor.submit(new Callable<Boolean>() {
-            @Override
-            public Boolean call() throws Exception {
+    Graph<NVV> q = new Graph<>();
+
+    class BuildIt extends Thread {
+
+        public void run() {
+            while (this.isAlive()) {
                 try {
-                    ProcessBuilder pb = new ProcessBuilder()
-                            .command(command.split(" "))
-                            .inheritIO();
-                    Process p = pb.start();
-                    processMap.put(path, p);
-                    p.waitFor(1, TimeUnit.MINUTES);
-                    processMap.remove(path);
-
-                    logger.info(String.format("exit %1$s %2$s", nvv, p.exitValue()));
-                    return p.exitValue() == 0;
-
-                } catch (IOException | InterruptedException ex) {
+                    
+                    Thread.sleep(1000L);
+                } catch (InterruptedException ex) {
                     Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
                 }
-                return false;
+
+                if (q.isEmpty()) {
+                    continue;
+                }
+
+                try {
+                    q.paths().forEach(nvv -> {
+                        try {
+                            if (!doBuild(nvv).get()) {
+                                throw new RuntimeException(nvv + " failed");
+                            }
+                        } catch (InterruptedException | ExecutionException ex) {
+                            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+
+                    });
+                } catch (RuntimeException x) {
+                    logger.info(x.getMessage());
+                }
+                logger.info("build exited");
+                q.clear();
             }
-        });
+        }
+
+        public CompletableFuture<Boolean> doBuild(NVV nvv) {
+            CompletableFuture<Boolean> result = new CompletableFuture<>();
+
+            Path dir = buildArtifact.get(nvv);
+            if (dir == null) {
+                result.complete(Boolean.FALSE);
+                return result;
+            }
+
+            if (processMap.containsKey(dir)) {
+                logger.info(String.format("already building % 1$s ", nvv));
+                result.complete(Boolean.FALSE);
+                return result;
+                //processMap.get(path).destroyForcibly(); }
+            }
+
+            String command = locateCommand(nvv, dir); //nice to have different commands for different paths
+            logger.info(String.format("build %1$s %2$s", nvv, command));
+
+            if (command.isEmpty()) {
+                result.complete(Boolean.FALSE);
+                return result;
+            }
+
+            ProcessBuilder pb = new ProcessBuilder().command(command.split(" "))
+                    .inheritIO();
+
+            /**
+             * try { if (!doBuild(nvv, null, dir).get()) { throw new
+             * RuntimeException(String.format("%1$s failed", nvv)); } } catch
+             * (InterruptedException | ExecutionException ex) {
+             * Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null,
+             * ex); }
+             *
+             * return executor.submit(new Callable<Boolean>() {
+             *
+             * @Override public Boolean call() throws Exception { *
+             */
+            try {
+                Process p
+                        = pb.start();
+                processMap.put(dir, p);
+                if (!p.waitFor(1, TimeUnit.MINUTES)) {
+                    p.destroyForcibly();
+                }
+
+                processMap.remove(dir);
+
+                logger.info(String.format("exit %1$s %2$s", nvv, p.exitValue()));
+                result.complete(p.exitValue() == 0);
+            } catch (IOException | InterruptedException ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                result.complete(Boolean.FALSE);
+            }
+
+            //}
+            //});
+            return result;
+        }
     }
 
     private String locateCommand(NVV nvv, Path path) {
@@ -571,19 +630,19 @@ public class Rvn extends Thread {
     private synchronized NVV findPom(Path path) throws Exception {
 
         //    return buildPaths.get(path);
-        List<Map.Entry<NVV, Path>> base = buildArtifact.entrySet().stream()
-                .filter(e -> isBasePath(e.getValue(), path)
+        List<Map.Entry<Path, NVV>> base = buildPaths.entrySet().stream()
+                .filter(e -> isBasePath(e.getKey(), path)
                 ).collect(Collectors.toList());
 
         logger.fine("base: " + base.toString());
 
-        Optional<Map.Entry<NVV, Path>> nvv = base.stream()
+        Optional<Map.Entry<Path, NVV>> nvv = base.stream()
                 .reduce((e1, e2) -> {
-                    return (e1 != null && e1.getValue().getNameCount() >= e2.getValue().getNameCount()) ? e1 : e2;
+                    return (e1 != null && e1.getKey().getNameCount() >= e2.getKey().getNameCount()) ? e1 : e2;
                 });
 
         if (nvv.isPresent()) {
-            return nvv.get().getKey();
+            return nvv.get().getValue();
         } else {
             return null;
         }
@@ -601,10 +660,10 @@ public class Rvn extends Thread {
 
         if (changed.endsWith(project)) {
             base = true;
-        } else if ((changed.toString().startsWith(parent.toString()))) {
+        } else if (changed.startsWith(parent)) {
             base = true;
         }
-        logger.finest(changed + " " + parent + " " + base);
+        logger.fine(changed + " " + parent + " " + base);
         return base;
     }
 
@@ -713,58 +772,6 @@ public class Rvn extends Thread {
         ScriptEngine engine = manager.getEngineByName("JavaScript");
         return engine;
 
-    }
-
-}
-
-class NVV {
-
-    public String name, vendor, version;
-    public Path path;
-
-    public NVV(String name, String vendor, String version) {
-        this(name, vendor, version, null);
-    }
-
-    public NVV(String name, String vendor, String version, Path path) {
-        this.name = name;
-        this.vendor = vendor;
-        this.version = version;
-        this.path = path;
-    }
-
-    @Override
-    public String toString() {
-        return String.format("%1$s::%2$s::%3$s", vendor, name, version);
-    }
-
-    @Override
-    public int hashCode() {
-        int hash = 3;
-        hash = 61 * hash + Objects.hashCode(this.name);
-        hash = 61 * hash + Objects.hashCode(this.vendor);
-        return hash;
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj == null) {
-            return false;
-        }
-        if (getClass() != obj.getClass()) {
-            return false;
-        }
-        final NVV other = (NVV) obj;
-        if (!Objects.equals(this.name, other.name)) {
-            return false;
-        }
-        if (!Objects.equals(this.vendor, other.vendor)) {
-            return false;
-        }
-        return true;
     }
 
 }
