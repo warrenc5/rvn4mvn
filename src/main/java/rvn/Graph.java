@@ -49,12 +49,11 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 findPrevious2(e.getKey(), v);
                 return q.stream();
             });
-        }).distinct().forEach(e->oq.add(e));
+        }).distinct().forEach(e -> oq.add(e));
 
-        System.out.println("q->" + q.toString() + " " + q.size());
+        logger.finest("q->" + q.toString() + " " + q.size());
         this.clear();
-        System.out.println("oq->" + oq.toString() + " " + oq.size());
-
+        logger.info("oq->" + oq.toString() + " " + oq.size());
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
             @Override
@@ -77,24 +76,22 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
     }
 
     private void findPrevious2(NVV n1, NVV n2) {
-        //.filter(e -> !(e.nvv1.equals(n1) && e.nvv2.equals(n2)))
-        //System.out.println(i + " " + n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
         this.entrySet().stream().filter(n -> n.getValue().contains(n2))
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
-               // .filter(e -> !(e.nvv1.equals(e.nvv2)))
                 .forEach(e -> {
-            System.out.println(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
-            q.remove(e.nvv1);
-            q.offerFirst(e.nvv1);
+                    logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+                    q.remove(e.nvv1);
+                    q.offerFirst(e.nvv1);
 
-            if(e.nvv1.equals(e.nvv2))
-                    return;
-                findPrevious2(n2, e.nvv1);
+                    if (e.nvv1.equals(e.nvv2)) {
+                        return;
+                    }
+                    findPrevious2(n2, e.nvv1);
 
-            q.remove(e.nvv2);
-            q.offerLast(e.nvv2);
+                    q.remove(e.nvv2);
+                    q.offerLast(e.nvv2);
 
-        });
+                });
     }
 }
