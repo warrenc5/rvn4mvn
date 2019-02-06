@@ -746,8 +746,8 @@ public class Rvn extends Thread {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             this.matchDirIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
             this.matchDirExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
-            logger.info(key + " " + matchDirIncludes.toString());
-            logger.info(key + " " + matchDirExcludes.toString());
+            logger.info(key + " includes " + matchDirIncludes.toString());
+            logger.info(key + " excludes " + matchDirExcludes.toString());
         }
 
         if (result.hasMember(key = "activeFiles")) {
@@ -755,8 +755,8 @@ public class Rvn extends Thread {
             this.matchFileIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
             this.matchFileExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
 
-            logger.info(key + " " + matchFileIncludes.toString());
-            logger.info(key + " " + matchFileExcludes.toString());
+            logger.info(key + " includes " + matchFileIncludes.toString());
+            logger.info(key + " excludes " + matchFileExcludes.toString());
         }
 
         if (result.hasMember(key = "activeArtifacts")) {
@@ -764,8 +764,8 @@ public class Rvn extends Thread {
             this.matchArtifactIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
             this.matchArtifactExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
 
-            logger.info(key + " " + matchArtifactIncludes.toString());
-            logger.info(key + " " + matchArtifactExcludes.toString());
+            logger.info(key + " includes " + matchArtifactIncludes.toString());
+            logger.info(key + " excludes " + matchArtifactExcludes.toString());
         }
 
         if (result.hasMember(key = "buildCommands")) {
