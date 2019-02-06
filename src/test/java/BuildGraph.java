@@ -61,7 +61,7 @@ public class BuildGraph {
         System.out.println("g->" + graph.toString());
         ordered = graph.paths().collect(Collectors.toList());
         System.out.println("o->" + ordered.toString());
-        Assert.assertArrayEquals(new NVV[]{y, x, z}, ordered.toArray(new NVV[ordered.size()]));
+        Assert.assertArrayEquals(new NVV[]{x, y, z}, ordered.toArray(new NVV[ordered.size()]));
 
     }
 

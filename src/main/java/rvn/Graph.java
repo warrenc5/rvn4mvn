@@ -3,6 +3,7 @@ package rvn;
 import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -43,9 +44,13 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
     }
 
     public Stream<NVV> paths() {
+        return paths(null);
+    }
+    public Stream<NVV> paths(NVV nvv) {
 
         this.entrySet().stream().flatMap(e -> {
-            return e.getValue().stream().flatMap(v -> {
+            return e.getValue().stream().filter(n->(e.getKey().equals(nvv) || nvv == null))
+                    .flatMap(v -> {
                 findPrevious2(e.getKey(), v);
                 return q.stream();
             });
@@ -53,7 +58,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
 
         logger.finest("q->" + q.toString() + " " + q.size());
         this.clear();
-        logger.info("oq->" + oq.toString() + " " + oq.size());
+        logger.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size());
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
             @Override
@@ -80,18 +85,26 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-                    logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+                    //logger.info(n1 + " " + n2 + " " + e.toString()); 
+                    //logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
 
                     if (e.nvv1.equals(e.nvv2)) {
                         return;
                     }
-                    findPrevious2(n2, e.nvv1);
+
+                    if(!(n1.equals(e.nvv1) && n2.equals(e.nvv2))) {
+                        findPrevious2(n2, e.nvv1);
+                    }
 
                     q.remove(e.nvv2);
                     q.offerLast(e.nvv2);
 
                 });
+    }
+
+    public boolean contains(Edge edge) {
+        return this.containsKey(edge.nvv1) && this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
     }
 }
