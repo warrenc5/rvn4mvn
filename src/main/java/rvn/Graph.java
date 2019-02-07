@@ -85,8 +85,8 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-                    //logger.info(n1 + " " + n2 + " " + e.toString()); 
-                    //logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+                    logger.fine(n1 + " " + n2 + " " + e.toString()); 
+                    logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
 

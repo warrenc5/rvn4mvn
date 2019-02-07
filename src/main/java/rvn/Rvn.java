@@ -153,18 +153,32 @@ public class Rvn extends Thread {
         logger.info(String.format("commandless"));
     }
 
-    private void processCommand(String command) {
+    private void processCommand(final String command) {
         try {
             logger.info(String.format("%1$s", LocalTime.now()));
-            if (isNVV(command)) {
-                this.buildArtifact.keySet().stream().filter(n->n.toString().matches(command)).forEach(n->this.processChange(n));
+            
+            if (command.equals("!")) {
+                this.processMap.values().forEach(p -> p.destroyForcibly());
+            } else if (command.equals("@")) {
+                this.reloadConfiguration();
+            } else if (command.equals("$")) {
+                this.reloadConfiguration();
+            } else if (command.startsWith("?")) {
+                List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
+                Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
+
+                logger.info(index.stream()
+                        .filter(i -> matchNVVCommand(i,command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
+                        .map(i -> String.format("%1$s %2$s", i, buildArtifact.get(i)))
+                        .collect(Collectors.joining("," + System.lineSeparator(), "[", "]"))
+                );
+            } else if (isNVV(command)) {
+                this.buildArtifact.keySet().stream()
+                        .filter(n -> matchNVVCommand(n,command))
+                        .forEach(n -> this.processChange(n));
             } else if (Files.exists(Paths.get(command))) {
                 this.hashes.remove(Paths.get(command));
                 this.processPath(Paths.get(command));
-            } else if(command.equals("!")){
-                this.processMap.values().forEach(p->p.destroyForcibly());
-            } else if(command.equals("?")){
-                logger.info(this.buildArtifact.toString().replace(',', '\n'));
             }
             //jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine().eval("config=" + command);
             //buildConfiguration(result);
@@ -273,10 +287,7 @@ public class Rvn extends Thread {
                         if (child.equals(config)) {
                             try {
                                 logger.info("config changed " + filename);
-                                keys.forEach(k -> k.cancel());
-                                this.init();
-                                this.loadConfiguration();
-                                this.scan();
+                                this.reloadConfiguration();
                             } catch (Throwable ex) {
                                 Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
                             }
@@ -359,7 +370,6 @@ public class Rvn extends Thread {
             this.nvvParent(nvv, pom);
 
             //logger.info(String.format("nvv: %1$s %2$s", path, nvv));
-
             if (matchNVV(nvv)) {
                 this.buildDeps(nvv);
             }
@@ -476,7 +486,7 @@ public class Rvn extends Thread {
     }
 
     private void processChange(NVV nvv) {
-                processChange(nvv, buildArtifact.get(nvv));
+        processChange(nvv, buildArtifact.get(nvv));
     }
 
     private void processChange(NVV nvv, Path path) {
@@ -544,6 +554,30 @@ public class Rvn extends Thread {
         return command.matches(".*::.*");
     }
 
+    private void reloadConfiguration() throws Exception {
+        keys.forEach(k -> k.cancel());
+        this.init();
+        this.loadConfiguration();
+        this.scan();
+    }
+
+    private boolean matchNVVCommand(NVV i, String match) {
+        StringBuilder bob = new StringBuilder();
+        if(match.length()==0){
+            match="::";
+        }
+        if(match.startsWith("::")){
+            bob.append(".*");
+        }
+        bob.append(match);
+        if(match.endsWith("::")){
+            bob.append(".*");
+        }
+
+        return i.toString().matches(bob.toString());
+    }
+
+
     class BuildIt extends Thread {
 
         public void run() {
@@ -558,7 +592,7 @@ public class Rvn extends Thread {
                     continue;
                 }
 
-                try (Stream<NVV> path = q.paths()){
+                try (Stream<NVV> path = q.paths()) {
                     path.forEach(nvv -> {
                         try {
                             if (!doBuild(nvv).get()) {
