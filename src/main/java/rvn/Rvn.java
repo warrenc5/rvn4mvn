@@ -27,7 +27,6 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -83,7 +82,7 @@ public class Rvn extends Thread {
     private Map<NVV, Set<NVV>> projects;
     private Map<Path, Process> processMap;
 
-    private Map<String, String> commands;
+    private Map<String, List<String>> commands;
 
     private List<String> matchFileIncludes;
     private List<String> matchFileExcludes;
@@ -153,12 +152,18 @@ public class Rvn extends Thread {
         logger.info(String.format("commandless"));
     }
 
-    private void processCommand(final String command) {
+    private void processCommand(final String command2) {
+        final String command = command2.trim();
         try {
             logger.info(String.format("%1$s", LocalTime.now()));
-            
+
             if (command.equals("!")) {
                 this.processMap.values().forEach(p -> p.destroyForcibly());
+            } else if (command.equals("!!")) {
+                this.processMap.values().forEach(p -> p.destroyForcibly());
+                List<NVV> l = new ArrayList<>();
+                this.q.oq.drainTo(l);
+                logger.info("cancelled " + l.toString());
             } else if (command.equals("@")) {
                 this.reloadConfiguration();
             } else if (command.equals("$")) {
@@ -168,13 +173,13 @@ public class Rvn extends Thread {
                 Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
 
                 logger.info(index.stream()
-                        .filter(i -> matchNVVCommand(i,command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
+                        .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
                         .map(i -> String.format("%1$s %2$s", i, buildArtifact.get(i)))
                         .collect(Collectors.joining("," + System.lineSeparator(), "[", "]"))
                 );
             } else if (isNVV(command)) {
                 this.buildArtifact.keySet().stream()
-                        .filter(n -> matchNVVCommand(n,command))
+                        .filter(n -> matchNVVCommand(n, command))
                         .forEach(n -> this.processChange(n));
             } else if (Files.exists(Paths.get(command))) {
                 this.hashes.remove(Paths.get(command));
@@ -563,27 +568,26 @@ public class Rvn extends Thread {
 
     private boolean matchNVVCommand(NVV i, String match) {
         StringBuilder bob = new StringBuilder();
-        if(match.length()==0){
-            match="::";
+        if (match.length() == 0) {
+            match = "::";
         }
-        if(match.startsWith("::")){
+        if (match.startsWith("::")) {
             bob.append(".*");
         }
         bob.append(match);
-        if(match.endsWith("::")){
+        if (match.endsWith("::")) {
             bob.append(".*");
         }
 
         return i.toString().matches(bob.toString());
     }
 
-
     class BuildIt extends Thread {
 
         public void run() {
             while (this.isAlive()) {
                 try {
-                    Thread.sleep(1000L);
+                    Thread.sleep(200L);
                 } catch (InterruptedException ex) {
                     Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
                 }
@@ -671,7 +675,8 @@ public class Rvn extends Thread {
 
     private String locateCommand(NVV nvv, Path path) {
         return String.format(commands.entrySet().stream()
-                .filter(e -> path.toString().matches(e.getKey()) || nvv.toString().matches(e.getKey())).map(e -> e.getValue()).findFirst().orElse(commands.get("::::")), path);
+                .filter(e -> path.toString().matches(e.getKey()) || nvv.toString().matches(e.getKey())).map(e -> e.getValue()).map(a
+                -> a == null ? null : a.get(0)).findFirst().orElse(commands.get("::::").get(0)), path);
     }
 
     private boolean isPom(Path path) {
@@ -729,6 +734,7 @@ public class Rvn extends Thread {
     }
 
     public String toSHA1(Path value) throws IOException {
+        md.update(Long.toString(Files.size(value)).getBytes());
         Files.lines(value).forEach(s -> md.update(s.getBytes()));
         return new String(md.digest());
     }
@@ -804,13 +810,24 @@ public class Rvn extends Thread {
 
         if (result.hasMember(key = "buildCommands")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            v.entrySet().forEach(e -> commands.put(e.getKey(), e.getValue().toString()));
+            v.entrySet().forEach(e -> commands.put(e.getKey(), optionalArray(e.getValue())));
             System.out.println(key + " " + commands.toString());
         }
     }
 
-    private Collection<? extends String> asArray(ScriptObjectMirror v) {
-        List result = new ArrayList();
+    private List<String> optionalArray(Object v) {
+        if (v instanceof ScriptObjectMirror) {
+            ScriptObjectMirror s = (ScriptObjectMirror) v;
+            if (s.isArray()) {
+                return asArray(s);
+            }
+        }
+        return Arrays.asList(new String[]{v.toString()});
+
+    }
+
+    private List<String> asArray(ScriptObjectMirror v) {
+        List<String> result = new ArrayList<>();
         if (v.isArray() && !v.isEmpty()) {
             for (int i = 0; i < v.size(); i++) {
                 result.add((String) v.getSlot(i));
