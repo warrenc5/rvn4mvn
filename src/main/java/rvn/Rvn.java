@@ -45,9 +45,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -90,6 +93,7 @@ public class Rvn extends Thread {
     private List<String> matchDirExcludes;
     private List<String> matchArtifactIncludes;
     private List<String> matchArtifactExcludes;
+    private List<CommandHandler> commandHandlers;
 
     private Logger logger = Logger.getLogger(Rvn.class.getName());
 
@@ -106,6 +110,8 @@ public class Rvn extends Thread {
         rvn.processStdIn();
         System.out.println(String.format("exited"));
     }
+
+    private Integer timeout = 60;
 
     public Rvn() throws Exception {
         watcher = FileSystems.getDefault().newWatchService();
@@ -138,6 +144,8 @@ public class Rvn extends Thread {
 
         loadConfiguration();
 
+        commandHandlers = new ArrayList<>();
+        createCommandHandlers();
     }
 
     private void processStdIn() {
@@ -154,44 +162,17 @@ public class Rvn extends Thread {
 
     private void processCommand(final String command2) {
         final String command = command2.trim();
-        try {
-            logger.info(String.format("%1$s", LocalTime.now()));
+        logger.info(String.format("%1$s", LocalTime.now()));
+        commandHandlers.stream().forEach(c -> c.apply(command));
 
-            if (command.equals("!")) {
-                this.processMap.values().forEach(p -> p.destroyForcibly());
-            } else if (command.equals("!!")) {
-                this.processMap.values().forEach(p -> p.destroyForcibly());
-                List<NVV> l = new ArrayList<>();
-                this.q.oq.drainTo(l);
-                logger.info("cancelled " + l.toString());
-            } else if (command.equals("@")) {
-                this.reloadConfiguration();
-            } else if (command.equals("$")) {
-                this.reloadConfiguration();
-            } else if (command.startsWith("?")) {
-                List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
-                Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
-
-                logger.info(index.stream()
-                        .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
-                        .map(i -> String.format("%1$s %2$s", i, buildArtifact.get(i)))
-                        .collect(Collectors.joining("," + System.lineSeparator(), "[", "]"))
-                );
-            } else if (isNVV(command)) {
-                this.buildArtifact.keySet().stream()
-                        .filter(n -> matchNVVCommand(n, command))
-                        .forEach(n -> this.processChange(n));
-            } else if (Files.exists(Paths.get(command))) {
-                this.hashes.remove(Paths.get(command));
-                this.processPath(Paths.get(command));
-            }
+        /*
             //jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine().eval("config=" + command);
             //buildConfiguration(result);
         } catch (ScriptException ex) {
             logger.warning(String.format("%1$s", ex.getMessage()));
         } catch (Exception ex) {
             logger.severe("command failed" + ex.getMessage());
-        }
+        }*/
     }
 
     public void registerPath(String uri) {
@@ -582,6 +563,89 @@ public class Rvn extends Thread {
         return i.toString().matches(bob.toString());
     }
 
+    private void createCommandHandlers() {
+
+        commandHandlers.add(new CommandHandler("?", "?", "Prints the help.", (command) -> {
+            if (command.equals("?")) {
+                    logger.info(String.format("%1$s\t\t %2$s \t\t\t %3$s\n", "Command", "Example", "Description"));
+                commandHandlers.stream().forEach(c
+                        -> {
+                    logger.info(String.format("%1$s\t\t %2$s \t\t\t - %3$s\n", c.verb, c.format, c.description));
+
+                });
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler("!", "!", "Stop the current build. Leave the build queue in place", (command) -> {
+            if (command.equals("!")) {
+                this.processMap.values().forEach(p -> p.destroyForcibly());
+            }
+            return null;
+        }));
+        commandHandlers.add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue", (command) -> {
+            if (command.equals("!!")) {
+                this.processMap.values().forEach(p -> p.destroyForcibly());
+                List<NVV> l = new ArrayList<>();
+                this.q.oq.drainTo(l);
+                logger.info("cancelled " + l.toString());
+            }
+            return null;
+        }));
+        commandHandlers.add(new CommandHandler("@", "@", "Reload the configuration file and rescan filesystem.", (command) -> {
+            if (command.equals("@")) {
+                try {
+                    this.reloadConfiguration();
+                } catch (Exception ex) {
+                    logger.warning(ex.getMessage());
+                }
+            }
+            return null;
+        }));
+        commandHandlers.add(new CommandHandler("`", "`::test::", "List know project(s) matching coordinate or path expression.", (command) -> {
+            if (command.startsWith("`")) {
+                List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
+                Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
+
+                logger.info(index.stream()
+                        .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
+                        .map(i -> String.format("%1$s %2$s", i, buildArtifact.get(i)))
+                        .collect(Collectors.joining("," + System.lineSeparator(), "[", "]"))
+                );
+            }
+            return null;
+        }));
+        commandHandlers.add(new CommandHandler("[groupId]::[artifactId]::[version]", "::test:: mygroup::", "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*::test::.* or ::test:: ", (command) -> {
+            if (isNVV(command)) {
+                this.buildArtifact.keySet().stream()
+                        .filter(n -> matchNVVCommand(n, command))
+                        .forEach(n -> this.processChange(n));
+            }
+            return null;
+        }));
+        commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml", "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
+            if (Files.exists(Paths.get(command))) {
+                this.hashes.remove(Paths.get(command));
+                try {
+                    this.processPath(Paths.get(command));
+                } catch (Exception ex) {
+                    logger.warning(ex.getMessage());
+                }
+            }
+            return null;
+        }
+        ));
+        commandHandlers.add(new CommandHandler("timeout {number}", "timeout 60", "Sets the maximum build timeout to 1 minute.", (command) -> {
+            Pattern pattern = Pattern.compile("^timeout\\s([0-9]+)$");
+            Matcher matcher = pattern.matcher(command);
+            if(matcher.matches()){
+                timeout = Integer.parseInt(matcher.group(1));
+                logger.warning(String.format("timeout is %1$d second",timeout));
+            }
+            return null;
+        }));
+    }
+
     class BuildIt extends Thread {
 
         public void run() {
@@ -641,22 +705,10 @@ public class Rvn extends Thread {
             ProcessBuilder pb = new ProcessBuilder().command(command.split(" "))
                     .inheritIO();
 
-            /**
-             * try { if (!doBuild(nvv, null, dir).get()) { throw new
-             * RuntimeException(String.format("%1$s failed", nvv)); } } catch
-             * (InterruptedException | ExecutionException ex) {
-             * Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null,
-             * ex); }
-             *
-             * return executor.submit(new Callable<Boolean>() {
-             *
-             * @Override public Boolean call() throws Exception { *
-             */
             try {
-                Process p
-                        = pb.start();
+                Process p = pb.start();
                 processMap.put(dir, p);
-                if (!p.waitFor(1, TimeUnit.MINUTES)) {
+                if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
                     p.destroyForcibly();
                 }
 
@@ -685,7 +737,6 @@ public class Rvn extends Thread {
     }
 
     private synchronized NVV findPom(Path path) throws Exception {
-
         //    return buildPaths.get(path);
         List<Map.Entry<Path, NVV>> base = buildPaths.entrySet().stream()
                 .filter(e -> isBasePath(e.getKey(), path)
@@ -843,11 +894,31 @@ public class Rvn extends Thread {
 
     }
 
-}
+    class CommandHandler implements Function<String, Void> {
 
+        private final String verb;
+        private final String format;
+        private final String description;
+        private final Function<String, Void> fun;
+
+        public CommandHandler(String verb, String format, String description, Function<String, Void> fun) {
+            this.verb = verb;
+            this.format = format;
+            this.description = description;
+            this.fun = fun;
+        }
+
+        @Override
+        public Void apply(String t) {
+            return this.fun.apply(t);
+        }
+
+    }
 /**
  * @SuppressWarnings("unchecked") static <T> WatchEvent<T>
  * cast(WatchEvent<?>
  * event) { return (WatchEvent<Path>) event; }
  *
  */
+
+}
