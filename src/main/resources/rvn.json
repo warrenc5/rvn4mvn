@@ -29,8 +29,10 @@ config = {
         ]
     },
     "buildCommands": {
-        "::::": "/opt/maven/bin/mvn -DskipTests -f %1$s clean install",
-        "/code/captcha/.*": "/opt/maven/bin/mvn -DskipTests -f %1$s -N install",
-        "mofokom::.*": "/opt/maven/bin/mvn -DskipTests -f %1$s install"
+        "::::": "mvn -DskipTests -f %1$s clean install",
+        "/code/captcha/.*": "mvn -DskipTests -f %1$s -N install",
+        "mofokom::.*": [
+            "mvn -DskipTests -f %1$s install"
+        ]
     }
 }
