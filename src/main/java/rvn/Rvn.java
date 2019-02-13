@@ -1,9 +1,13 @@
 package rvn;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.URI;
@@ -99,11 +103,12 @@ public class Rvn extends Thread {
 
     private MessageDigest md = null;
 
-    private Map<Path, String> hashes;
+    private Map<String, String> hashes;
     private final WatchService watcher;
     private Path config;
 
     public static void main(String[] args) throws Exception {
+        Logger.getAnonymousLogger().warning(ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
         Rvn rvn = new Rvn();
         rvn.locations.addAll(Arrays.asList(args));
         rvn.start();
@@ -142,6 +147,7 @@ public class Rvn extends Thread {
         matchArtifactIncludes = new ArrayList<>();
         matchArtifactExcludes = new ArrayList<>();
 
+        this.readHashes();
         loadConfiguration();
 
         commandHandlers = new ArrayList<>();
@@ -177,7 +183,7 @@ public class Rvn extends Thread {
 
     public void registerPath(String uri) {
         Path dir = Paths.get(uri);
-        logger.info(String.format("watching %1$s", dir));
+        logger.info(String.format(ANSI_WHITE + "watching %1$s" +ANSI_RESET, dir));
         registerPath(dir);
     }
 
@@ -238,7 +244,7 @@ public class Rvn extends Thread {
         watchSet = new ArrayList(this.keyPath.values());
         Collections.sort(watchSet);
         logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
-        logger.info(String.format("%1$s builds %2$s projects %3$s keys", buildPaths.size(), projects.size(), keys.size()));
+        logger.info(String.format(ANSI_WHITE + "%1$s builds, %2$s projects, %3$s keys" + ANSI_RESET, buildPaths.size(), projects.size(), keys.size()));
     }
 
     @Override
@@ -345,7 +351,7 @@ public class Rvn extends Thread {
 
         boolean skipHash = !path.endsWith("pom.xml");
 
-        if (!skipHash && hashes.containsKey(path) && toSHA1(path).equals(hashes.get(path))) {
+        if (!skipHash && hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
             logger.info("no change detected" + path);
             return;
         }
@@ -399,13 +405,19 @@ public class Rvn extends Thread {
         if (path.endsWith("pom.xml")) {
             Path oldPath = buildArtifact.put(nvv, path);
             if (oldPath != null) {
-                logger.warning(String.format("%1$s replaces %2$s", path, oldPath));
+                logger.warning(String.format(ANSI_PURPLE+"%1$s "+ ANSI_YELLOW +"replaces" +ANSI_PURPLE +" %2$s" +ANSI_RESET, path, oldPath));
             }
 
             buildPaths.put(path, nvv);
         }
 
-        hashes.put(path, this.toSHA1(path));
+        String newHash = null;
+
+        String oldHash = hashes.put(path.toString(), newHash = this.toSHA1(path));
+        if(oldHash != null && oldHash !=newHash) {
+            //logger.warning(String.format("%1$s already changed", nvv));
+            //this.buildDeps(nvv);
+        }
 
         NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
 
@@ -476,10 +488,11 @@ public class Rvn extends Thread {
     }
 
     private void processChange(NVV nvv, Path path) {
-        logger.info(String.format("changed %1$s %2$s", nvv.toString(), path));
+        logger.info(String.format("changed " + ANSI_CYAN + "%1$s" +ANSI_PURPLE+" %2$s" +ANSI_RESET, nvv.toString(), path));
 
         try {
-            hashes.put(path, this.toSHA1(path));
+            hashes.put(path.toString(), this.toSHA1(path));
+            writeHashes();
         } catch (IOException ex) {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -567,7 +580,7 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("?", "?", "Prints the help.", (command) -> {
             if (command.equals("?")) {
-                    logger.info(String.format("%1$s\t\t %2$s \t\t\t %3$s\n", "Command", "Example", "Description"));
+                logger.info(String.format("%1$s\t\t %2$s \t\t\t %3$s\n", "Command", "Example", "Description"));
                 commandHandlers.stream().forEach(c
                         -> {
                     logger.info(String.format("%1$s\t\t %2$s \t\t\t - %3$s\n", c.verb, c.format, c.description));
@@ -579,16 +592,19 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("!", "!", "Stop the current build. Leave the build queue in place", (command) -> {
             if (command.equals("!")) {
-                this.processMap.values().forEach(p -> p.destroyForcibly());
+                this.processMap.values().forEach(p -> stopProcess(p));
             }
             return null;
         }));
         commandHandlers.add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue", (command) -> {
             if (command.equals("!!")) {
-                this.processMap.values().forEach(p -> p.destroyForcibly());
+                this.processMap.values().forEach(p -> stopProcess(p));
                 List<NVV> l = new ArrayList<>();
                 this.q.oq.drainTo(l);
-                logger.info("cancelled " + l.toString());
+                if (l.isEmpty()) {
+                } else {
+                    logger.info("cancelled " + ANSI_CYAN + l.toString() + ANSI_RESET);
+                }
             }
             return null;
         }));
@@ -609,8 +625,8 @@ public class Rvn extends Thread {
 
                 logger.info(index.stream()
                         .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
-                        .map(i -> String.format("%1$s %2$s", i, buildArtifact.get(i)))
-                        .collect(Collectors.joining("," + System.lineSeparator(), "[", "]"))
+                        .map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_PURPLE + "%2$s" + ANSI_RESET, i, buildArtifact.get(i)))
+                        .collect(Collectors.joining("," + System.lineSeparator(), "", ""))
                 );
             }
             return null;
@@ -625,7 +641,7 @@ public class Rvn extends Thread {
         }));
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml", "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
             if (Files.exists(Paths.get(command))) {
-                this.hashes.remove(Paths.get(command));
+                this.hashes.remove(Paths.get(command).toString());
                 try {
                     this.processPath(Paths.get(command));
                 } catch (Exception ex) {
@@ -638,12 +654,45 @@ public class Rvn extends Thread {
         commandHandlers.add(new CommandHandler("timeout {number}", "timeout 60", "Sets the maximum build timeout to 1 minute.", (command) -> {
             Pattern pattern = Pattern.compile("^timeout\\s([0-9]+)$");
             Matcher matcher = pattern.matcher(command);
-            if(matcher.matches()){
+            if (matcher.matches()) {
                 timeout = Integer.parseInt(matcher.group(1));
-                logger.warning(String.format("timeout is %1$d second",timeout));
+                logger.warning(String.format("timeout is %1$d second", timeout));
             }
             return null;
         }));
+    }
+
+    private void writeHashes() throws IOException {
+
+        Path config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
+        try {
+            FileOutputStream fos = new FileOutputStream(config.toFile());
+            ObjectOutputStream oos = new ObjectOutputStream(fos);
+            oos.writeObject(this.hashes);
+            fos.flush();
+        } catch (IOException x) {
+            logger.info(x.getMessage());
+        }
+    }
+
+    private void readHashes() throws IOException {
+
+        Path config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
+        if (Files.exists(config)) {
+            try {
+                FileInputStream fis = new FileInputStream(config.toFile());
+                ObjectInputStream ois = new ObjectInputStream(fis);
+                this.hashes = (Map<String, String>) ois.readObject();
+            } catch (IOException x) {
+                logger.warning(x.getMessage());
+            } catch (ClassNotFoundException x) {
+                logger.warning(x.getMessage());
+            }
+        }
+    }
+
+    private void stopProcess(Process p) {
+        p.destroy();
     }
 
     class BuildIt extends Thread {
@@ -673,9 +722,9 @@ public class Rvn extends Thread {
                 } catch (RuntimeException x) {
                     logger.info(x.getMessage());
                 }
-                logger.info("build exited");
                 q.clear();
             }
+            logger.info("builder exited - no more builds - restart");
         }
 
         public CompletableFuture<Boolean> doBuild(NVV nvv) {
@@ -695,15 +744,18 @@ public class Rvn extends Thread {
             }
 
             String command = locateCommand(nvv, dir); //nice to have different commands for different paths
-            logger.info(String.format("build %1$s %2$s", nvv, command));
+            logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s"  + ANSI_RESET, nvv, command));
 
             if (command.isEmpty()) {
+                logger.info(String.format("already running " + ANSI_CYAN+ "%1$s "+ ANSI_WHITE+"%2$s" + ANSI_RESET, nvv, command));
                 result.complete(Boolean.FALSE);
                 return result;
             }
 
             ProcessBuilder pb = new ProcessBuilder().command(command.split(" "))
                     .inheritIO();
+
+            pb.environment().putAll(System.getenv());
 
             try {
                 Process p = pb.start();
@@ -714,7 +766,8 @@ public class Rvn extends Thread {
 
                 processMap.remove(dir);
 
-                logger.info(String.format("exit %1$s %2$s", nvv, p.exitValue()));
+                logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "returned " + ANSI_RED + "%2$s" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_RESET, nvv, p.exitValue(), command));
+
                 result.complete(p.exitValue() == 0);
             } catch (IOException | InterruptedException ex) {
                 Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
@@ -771,7 +824,7 @@ public class Rvn extends Thread {
         } else if (changed.startsWith(parent)) {
             base = true;
         }
-        logger.fine(changed + " " + parent + " " + base);
+        logger.fine(ANSI_PURPLE + "changed " + ANSI_CYAN + parent + " " + base + ANSI_RESET);
         return base;
     }
 
@@ -914,11 +967,25 @@ public class Rvn extends Thread {
         }
 
     }
-/**
- * @SuppressWarnings("unchecked") static <T> WatchEvent<T>
- * cast(WatchEvent<?>
- * event) { return (WatchEvent<Path>) event; }
- *
- */
+    /*
+    {System.out.println(System.getProperties().toString());
+    }
+     */
+    public static final Boolean IS_ANSI = System.console() != null && System.getenv().get("TERM") != null && System.getenv().get("TERM").contains("color");
+    public static final String ANSI_RESET = IS_ANSI ? "\u001B[0m" : "";
+    public static final String ANSI_BLACK = IS_ANSI ? "\u001B[30m" : "";
+    public static final String ANSI_RED = IS_ANSI ? "\u001B[31m" : "";
+    public static final String ANSI_GREEN = IS_ANSI ? "\u001B[32m" : "";
+    public static final String ANSI_YELLOW = IS_ANSI ? "\u001B[33m" : "";
+    public static final String ANSI_BLUE = IS_ANSI ? "\u001B[34m" : "";
+    public static final String ANSI_PURPLE = IS_ANSI ? "\u001B[35m" : "";
+    public static final String ANSI_CYAN = IS_ANSI ? "\u001B[36m" : "";
+    public static final String ANSI_WHITE = IS_ANSI ? "\u001B[37m" : "";
 
+    /**
+     * @SuppressWarnings("unchecked") static <T> WatchEvent<T>
+     * cast(WatchEvent<?>
+     * event) { return (WatchEvent<Path>) event; }
+     *
+     */
 }
