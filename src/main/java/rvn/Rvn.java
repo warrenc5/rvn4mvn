@@ -2,7 +2,9 @@ package rvn;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -49,6 +51,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
@@ -87,6 +90,8 @@ public class Rvn extends Thread {
     private Map<NVV, Path> buildArtifact;
     private Map<Path, NVV> buildPaths;
     private Map<NVV, Set<NVV>> projects;
+    private Map<NVV, NVV> parent;
+    private Map<NVV, File> failMap;
     private Map<Path, Process> processMap;
 
     private Map<String, List<String>> commands;
@@ -107,6 +112,9 @@ public class Rvn extends Thread {
     private final WatchService watcher;
     private Path config;
 
+    boolean ee = false;
+    boolean showOutput = true;
+
     public static void main(String[] args) throws Exception {
         Logger.getAnonymousLogger().warning(ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
         Rvn rvn = new Rvn();
@@ -117,6 +125,8 @@ public class Rvn extends Thread {
     }
 
     private Integer timeout = 60;
+    private NVV lastNvv;
+    private Instant then = null;
 
     public Rvn() throws Exception {
         watcher = FileSystems.getDefault().newWatchService();
@@ -127,7 +137,11 @@ public class Rvn extends Thread {
         }
 
         init();
-        new BuildIt().start();
+        BuildIt buildIt = new BuildIt();
+        buildIt.setDefaultUncaughtExceptionHandler((e, t) -> {
+            logger.warning(e.getName() + " " + t.getMessage());
+        });
+        buildIt.start();
     }
 
     public void init() throws Exception {
@@ -135,9 +149,11 @@ public class Rvn extends Thread {
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
         projects = new HashMap<>();
+        parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
         buildPaths = new LinkedHashMap<>();
         processMap = new LinkedHashMap<>();
+        failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
         matchFileIncludes = new ArrayList<>();
@@ -146,6 +162,7 @@ public class Rvn extends Thread {
         matchDirExcludes = new ArrayList<>();
         matchArtifactIncludes = new ArrayList<>();
         matchArtifactExcludes = new ArrayList<>();
+        then = Instant.now();
 
         this.readHashes();
         loadConfiguration();
@@ -160,6 +177,7 @@ public class Rvn extends Thread {
         Spliterator<String> splt = Spliterators.spliterator(scanner, Long.MAX_VALUE, Spliterator.ORDERED | Spliterator.NONNULL);
 
         while (this.isAlive()) {
+            Thread.yield();
             StreamSupport.stream(splt, false).onClose(scanner::close).forEach(this::processCommand);
         }
 
@@ -183,7 +201,7 @@ public class Rvn extends Thread {
 
     public void registerPath(String uri) {
         Path dir = Paths.get(uri);
-        logger.info(String.format(ANSI_WHITE + "watching %1$s" +ANSI_RESET, dir));
+        logger.info(String.format(ANSI_WHITE + "watching %1$s" + ANSI_RESET, dir));
         registerPath(dir);
     }
 
@@ -235,7 +253,6 @@ public class Rvn extends Thread {
     }
 
     public void scan() {
-        Instant then = Instant.now();
         locations.stream().forEach(this::registerPath);
         Duration duration = Duration.between(then, Instant.now());
 
@@ -244,13 +261,14 @@ public class Rvn extends Thread {
         watchSet = new ArrayList(this.keyPath.values());
         Collections.sort(watchSet);
         logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
-        logger.info(String.format(ANSI_WHITE + "%1$s builds, %2$s projects, %3$s keys" + ANSI_RESET, buildPaths.size(), projects.size(), keys.size()));
+        logger.info(String.format(ANSI_WHITE + "%1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET, buildPaths.size(), projects.size(), keys.size(), duration.toString()));
     }
 
     @Override
     public void run() {
         scan();
         while (this.isAlive()) {
+            Thread.yield();
             logger.fine(String.format("waiting.."));
             WatchKey key;
             try {
@@ -374,10 +392,11 @@ public class Rvn extends Thread {
                 logger.fine(String.format("no nvv: %1$s", path));
                 return;
             } else {
-                logger.info(String.format("nvv: %1$s %2$s", path, nvv));
+                logger.fine(String.format("nvv: %1$s %2$s", path, nvv));
             }
 
             if (matchNVV(nvv)) {
+                lastNvv = nvv;
                 processChange(nvv);
             }
         } catch (Exception x) {
@@ -404,8 +423,8 @@ public class Rvn extends Thread {
 
         if (path.endsWith("pom.xml")) {
             Path oldPath = buildArtifact.put(nvv, path);
-            if (oldPath != null) {
-                logger.warning(String.format(ANSI_PURPLE+"%1$s "+ ANSI_YELLOW +"replaces" +ANSI_PURPLE +" %2$s" +ANSI_RESET, path, oldPath));
+            if (oldPath != null && !oldPath.equals(path)) {
+                logger.warning(String.format(ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "replaces" + ANSI_PURPLE + " %2$s" + ANSI_RESET, path, oldPath));
             }
 
             buildPaths.put(path, nvv);
@@ -414,7 +433,7 @@ public class Rvn extends Thread {
         String newHash = null;
 
         String oldHash = hashes.put(path.toString(), newHash = this.toSHA1(path));
-        if(oldHash != null && oldHash !=newHash) {
+        if (oldHash != null && oldHash != newHash) {
             //logger.warning(String.format("%1$s already changed", nvv));
             //this.buildDeps(nvv);
         }
@@ -427,6 +446,7 @@ public class Rvn extends Thread {
         NVV parentNvv = nvvParent(nvv, xmlDocument);
 
         if (!Objects.isNull(parentNvv)) {
+            parent.put(nvv, parentNvv);
             deps.add(parentNvv);
         }
 
@@ -483,12 +503,13 @@ public class Rvn extends Thread {
         );
     }
 
-    private void processChange(NVV nvv) {
+    private NVV processChange(NVV nvv) {
         processChange(nvv, buildArtifact.get(nvv));
+        return nvv;
     }
 
     private void processChange(NVV nvv, Path path) {
-        logger.info(String.format("changed " + ANSI_CYAN + "%1$s" +ANSI_PURPLE+" %2$s" +ANSI_RESET, nvv.toString(), path));
+        logger.info(String.format("changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_RESET, nvv.toString(), path));
 
         try {
             hashes.put(path.toString(), this.toSHA1(path));
@@ -504,6 +525,7 @@ public class Rvn extends Thread {
         try {
             this.projects.entrySet().stream()
                     .filter(e -> e.getValue().stream()
+                    .filter(nvv2 -> !nvv2.equals(parent.get(nvv)))
                     .filter(nvv2 -> nvv2.equals(nvv)).findAny().isPresent())
                     .forEach(e -> qBuild(nvv, e.getKey()));
         } catch (RuntimeException x) {
@@ -533,6 +555,12 @@ public class Rvn extends Thread {
 
         if (!dir.endsWith("pom.xml")) {
             return;
+        } else {
+            try {
+                processPom(dir);
+            } catch (SAXException | XPathExpressionException | IOException | ParserConfigurationException ex) {
+                logger.warning(ex.getMessage());
+            }
         }
 
         Edge edge = new Edge(nvv, next);
@@ -596,6 +624,45 @@ public class Rvn extends Thread {
             }
             return null;
         }));
+
+        commandHandlers.add(new CommandHandler("-", "-", "Hide the output.", (command) -> {
+            if (command.equals("-")) {
+                Rvn.this.showOutput = false;
+                logger.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler("+", "+", "Show the output.", (command) -> {
+            if (command.equals("+")) {
+                Rvn.this.showOutput = true;
+                logger.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler("|", "|", "Show the last failed output.", (command) -> {
+            if (command.equals("|")) {
+                try {
+                    writeFileToStdout(Rvn.this.tf);
+                } catch (IOException ex) {
+                    logger.info(ex.getMessage());
+                }
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler(".", ".", "Repeat last change that triggered a build.", (command) -> {
+            if (command.equals(".")) {
+                if (lastNvv != null) {
+                    Path path = this.buildArtifact.get(lastNvv);
+                    String remove = hashes.remove(path.toString());
+                    processChange(lastNvv);
+                }
+            }
+            return null;
+        }));
+
         commandHandlers.add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue", (command) -> {
             if (command.equals("!!")) {
                 this.processMap.values().forEach(p -> stopProcess(p));
@@ -605,6 +672,15 @@ public class Rvn extends Thread {
                 } else {
                     logger.info("cancelled " + ANSI_CYAN + l.toString() + ANSI_RESET);
                 }
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler(">", ">", "Show the failMap", (command) -> {
+            if (command.equals(">")) {
+                failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
+                    logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_PURPLE + "%2$s" + ANSI_RESET, e.getKey(), e.getValue()));
+                });
             }
             return null;
         }));
@@ -635,7 +711,9 @@ public class Rvn extends Thread {
             if (isNVV(command)) {
                 this.buildArtifact.keySet().stream()
                         .filter(n -> matchNVVCommand(n, command))
-                        .forEach(n -> this.processChange(n));
+                        .forEach(n -> {
+                            lastNvv = this.processChange(n);
+                        });
             }
             return null;
         }));
@@ -646,6 +724,19 @@ public class Rvn extends Thread {
                     this.processPath(Paths.get(command));
                 } catch (Exception ex) {
                     logger.warning(ex.getMessage());
+                }
+            }
+            return null;
+        }
+        ));
+        commandHandlers.add(new CommandHandler("path", "/tmp/to/fail.out", "Dump the file to stdout", (command) -> {
+            if (command.endsWith(".out")) {
+                if (Files.exists(Paths.get(command))) {
+                    try {
+                        Rvn.this.writeFileToStdout(Paths.get(command).toFile());
+                    } catch (Exception ex) {
+                        logger.warning(ex.getMessage());
+                    }
                 }
             }
             return null;
@@ -692,37 +783,45 @@ public class Rvn extends Thread {
     }
 
     private void stopProcess(Process p) {
-        p.destroy();
+        p.destroyForcibly();
     }
+
+    private File tf = null;
 
     class BuildIt extends Thread {
 
         public void run() {
             while (this.isAlive()) {
-                try {
-                    Thread.sleep(200L);
-                } catch (InterruptedException ex) {
-                    Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-                }
+                Thread.yield();
 
                 if (q.isEmpty()) {
                     continue;
+                } else if (q.size() >= 5) {
+                    if (!ee) {
+                        ee = !ee;
+                        Rvn.this.easterEgg();
+                    }
                 }
 
                 try (Stream<NVV> path = q.paths()) {
                     path.forEach(nvv -> {
                         try {
-                            if (!doBuild(nvv).get()) {
-                                throw new RuntimeException(nvv + " failed");
+                            if (!doBuild(nvv).get(timeout, TimeUnit.MILLISECONDS)) {
+                                throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
+                                        + ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
                             }
-                        } catch (InterruptedException | ExecutionException ex) {
-                            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                            logger.finest("builder next");
+                            Thread.yield();
+
+                        } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
+                            logger.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + ex.getMessage());
+
+                            //path.close();
+                            //q.clear();
                         }
                     });
-                } catch (RuntimeException x) {
-                    logger.info(x.getMessage());
                 }
-                q.clear();
+
             }
             logger.info("builder exited - no more builds - restart");
         }
@@ -732,56 +831,102 @@ public class Rvn extends Thread {
 
             Path dir = buildArtifact.get(nvv);
             if (dir == null) {
-                result.complete(Boolean.FALSE);
+                logger.info(String.format("no pom % 1$s ", nvv));
+                result.complete(Boolean.TRUE);
                 return result;
             }
 
             if (processMap.containsKey(dir)) {
                 logger.info(String.format("already building % 1$s ", nvv));
-                result.complete(Boolean.FALSE);
+                result.complete(Boolean.TRUE);
                 return result;
                 //processMap.get(path).destroyForcibly(); }
             }
 
-            String command = locateCommand(nvv, dir); //nice to have different commands for different paths
-            logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s"  + ANSI_RESET, nvv, command));
+            List<String> commandList = locateCommand(nvv, dir); //nice to have different commands for different paths
 
-            if (command.isEmpty()) {
-                logger.info(String.format("already running " + ANSI_CYAN+ "%1$s "+ ANSI_WHITE+"%2$s" + ANSI_RESET, nvv, command));
-                result.complete(Boolean.FALSE);
-                return result;
-            }
+            for (String command : commandList) {
 
-            ProcessBuilder pb = new ProcessBuilder().command(command.split(" "))
-                    .inheritIO();
+                String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
 
-            pb.environment().putAll(System.getenv());
-
-            try {
-                Process p = pb.start();
-                processMap.put(dir, p);
-                if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
-                    p.destroyForcibly();
+                if (command.isEmpty()) {
+                    logger.info(String.format("already running " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, command));
+                    result.complete(Boolean.TRUE);
+                    return result;
+                } else {
+                    logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, cmd));
                 }
 
-                processMap.remove(dir);
+                command = String.format(command, dir);
+                ProcessBuilder pb = new ProcessBuilder().command(command.split(" "));
 
-                logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "returned " + ANSI_RED + "%2$s" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_RESET, nvv, p.exitValue(), command));
+                try {
 
-                result.complete(p.exitValue() == 0);
-            } catch (IOException | InterruptedException ex) {
-                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-                result.complete(Boolean.FALSE);
+                    if (Rvn.this.showOutput) {
+                        tf = null;
+                        pb.inheritIO();
+                    } else {
+                        tf = File.createTempFile("rvn-" + nvv.toString().replace(':', '-'), ".out");
+                        pb.redirectOutput(tf);
+                        pb.redirectError(tf);
+                        logger.fine("redirecting to " + ANSI_WHITE + tf + ANSI_RESET);
+                    }
+
+                    pb.environment().putAll(System.getenv());
+
+                    Process p = pb.start();
+                    processMap.put(dir, p);
+                    if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
+                        p.destroyForcibly();
+                    }
+
+                    processMap.remove(dir);
+
+                    logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "returned " + ANSI_RED + "%2$s" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_RESET, nvv, p.exitValue(), command));
+
+                    if (p.exitValue() != 0) {
+                        result.complete(Boolean.FALSE);
+                        if (!Rvn.this.showOutput) { //TODO make configurable
+                            failMap.put(nvv, tf);
+                        }
+                        break;
+                    } else {
+                        failMap.remove(nvv);
+                    }
+
+                    result.complete(p.exitValue() == 0);
+                } catch (IOException | InterruptedException ex) {
+                    logger.severe(ex.getMessage());
+                    result.complete(Boolean.FALSE);
+                }
             }
 
             return result;
         }
     }
 
-    private String locateCommand(NVV nvv, Path path) {
-        return String.format(commands.entrySet().stream()
-                .filter(e -> path.toString().matches(e.getKey()) || nvv.toString().matches(e.getKey())).map(e -> e.getValue()).map(a
-                -> a == null ? null : a.get(0)).findFirst().orElse(commands.get("::::").get(0)), path);
+    private void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
+        if (tf != null) {
+            try (FileReader reader = new FileReader(tf)) {
+                char c[] = new char[1024];
+                while (reader.ready()) {
+                    int l = reader.read(c);
+                    logger.info(new String(c, 0, l));
+                }
+            }
+        }
+    }
+
+    private List<String> locateCommand(NVV nvv, Path path) {
+        List<String> commandList = commands.entrySet().stream()
+                .filter(e -> path.toString().matches(e.getKey()) || nvv.toString().matches(e.getKey()))
+                .flatMap(e -> e.getValue().stream()).collect(Collectors.toList());
+
+        if (commandList.isEmpty()) {
+            commandList.addAll(commands.get("::::"));
+        }
+
+        return commandList;
     }
 
     private boolean isPom(Path path) {
@@ -789,7 +934,7 @@ public class Rvn extends Thread {
                 .stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst().isPresent(); //FIXME: absolutely
     }
 
-    private synchronized NVV findPom(Path path) throws Exception {
+    private NVV findPom(Path path) throws Exception {
         //    return buildPaths.get(path);
         List<Map.Entry<Path, NVV>> base = buildPaths.entrySet().stream()
                 .filter(e -> isBasePath(e.getKey(), path)
@@ -847,12 +992,12 @@ public class Rvn extends Thread {
         URL configURL = Rvn.class.getResource("/rvn.json");
         config = null;
 
-        logger.info(String.format("trying configuration %1$s", configURL));
+        logger.fine(String.format("trying configuration %1$s", configURL));
 
         if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
             config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.json");
             if (!Files.exists(config)) {
-                logger.info(String.format("creating new configuration from %1$s", configURL));
+                logger.fine(String.format("creating new configuration from " + ANSI_WHITE + "%1$s" + ANSI_RESET, configURL));
                 try (
                         Reader reader = new InputStreamReader(configURL.openStream());
                         Writer writer = new FileWriter(config.toFile());) {
@@ -861,7 +1006,7 @@ public class Rvn extends Thread {
                     }
                     writer.flush();
                 }
-                logger.info(String.format("written new configuration to %1$s", config));
+                logger.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
             }
 
         } else {
@@ -869,7 +1014,7 @@ public class Rvn extends Thread {
         }
 
         this.watch(config.getParent());
-        logger.info(String.format("loading configuration %1$s", config));
+        logger.info(String.format("loading configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
 
         Reader scriptReader = Files.newBufferedReader(config);
         jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine().eval(scriptReader);
@@ -880,6 +1025,10 @@ public class Rvn extends Thread {
     private void buildConfiguration(ScriptObjectMirror result) {
 
         String key = null;
+        if (result.hasMember(key = "showOutput")) {
+            this.showOutput = (Boolean) result.get(key);
+            logger.info(key + " " + this.showOutput);
+        }
         if (result.hasMember(key = "locations")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             locations.addAll(asArray(v));
@@ -915,7 +1064,12 @@ public class Rvn extends Thread {
         if (result.hasMember(key = "buildCommands")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             v.entrySet().forEach(e -> commands.put(e.getKey(), optionalArray(e.getValue())));
-            System.out.println(key + " " + commands.toString());
+            logger.info(key + " " + commands.toString());
+        }
+        if (result.hasMember(key = "timeout")) {
+            Integer v = (Integer) result.get(key);
+            timeout = v;
+            logger.info(key + " " + commands.toString());
         }
     }
 
@@ -947,6 +1101,10 @@ public class Rvn extends Thread {
 
     }
 
+    private void easterEgg() {
+        logger.info(new Scanner(Rvn.class.getResourceAsStream("/rvn.txt")).useDelimiter("\\z").next());
+    }
+
     class CommandHandler implements Function<String, Void> {
 
         private final String verb;
@@ -967,11 +1125,18 @@ public class Rvn extends Thread {
         }
 
     }
+
     /*
     {System.out.println(System.getProperties().toString());
     }
      */
-    public static final Boolean IS_ANSI = System.console() != null && System.getenv().get("TERM") != null && System.getenv().get("TERM").contains("color");
+    static final boolean isAnsi() {
+
+        String term = System.getenv().get("TERM");
+        boolean isAnsi = System.console() != null && term != null && (term.contains("color") || term.contains("xterm"));
+        return isAnsi;
+    }
+    public static final Boolean IS_ANSI = isAnsi();
     public static final String ANSI_RESET = IS_ANSI ? "\u001B[0m" : "";
     public static final String ANSI_BLACK = IS_ANSI ? "\u001B[30m" : "";
     public static final String ANSI_RED = IS_ANSI ? "\u001B[31m" : "";

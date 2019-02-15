@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -55,15 +56,19 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 return q.stream();
             });
         }).distinct().forEach(e -> oq.add(e));
-
-        logger.finest("q->" + q.toString() + " " + q.size());
+        logger.info("q->" + q.toString() + " " + q.size());
         this.clear();
-        logger.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size());
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
             @Override
             public boolean tryAdvance(Consumer<? super NVV> action) {
-                NVV element = oq.poll();
+                logger.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size() + " remaining");
+                NVV element = null;
+                try {
+                    Thread.yield();
+                    element = oq.poll(10,TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ex) {
+                }
                 if (element == null) {
                     return false;
                 } else {
@@ -71,6 +76,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                     return true;
                 }
             }
+            
         };
         return StreamSupport.stream(spliterator, false);
     }

@@ -1,4 +1,5 @@
 config = {
+    "showOutput" : true,
     "locations": [
         "/home/wozza/.m2/repository",
         "/code/captcha",
