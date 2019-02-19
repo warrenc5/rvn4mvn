@@ -188,7 +188,7 @@ public class Rvn extends Thread {
 
     private void processCommand(final String command2) {
         final String command = command2.trim();
-        logger.info(String.format("%1$s", LocalTime.now()));
+        logger.info(String.format(ANSI_YELLOW + "%1$s" + ANSI_RESET, LocalTime.now()));
         commandHandlers.stream().forEach(c -> c.apply(command));
 
         /*
@@ -513,7 +513,7 @@ public class Rvn extends Thread {
     }
 
     private void processChange(NVV nvv, Path path) {
-        logger.info(String.format("changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_RESET, nvv.toString(), path));
+        logger.info(String.format("changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_YELLOW + " %3$s" + ANSI_RESET, nvv.toString(), path, LocalTime.now().toString()));
 
         try {
             hashes.put(path.toString(), this.toSHA1(path));
@@ -530,7 +530,7 @@ public class Rvn extends Thread {
             this.projects.entrySet().stream()
                     .filter(e -> e.getValue().stream()
                     .filter(nvv2 -> !nvv2.equals(parent.get(nvv)))
-                    .filter(nvv2 -> nvv2.equals(nvv)).findAny().isPresent())
+                    .filter(nvv2 -> nvv2.equalsVersion(nvv)).findAny().isPresent())
                     .forEach(e -> qBuild(nvv, e.getKey()));
         } catch (RuntimeException x) {
             logger.warning(String.format("%1$s %2$s", nvv.toString(), x.getMessage()));
@@ -897,8 +897,13 @@ public class Rvn extends Thread {
                     logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, cmd));
                 }
 
+                if (command.indexOf("-f") == -1) {
+                    command = new StringBuilder(command).insert(command.indexOf("mvn") + 3, " -f %1$s").toString();
+                }
+
                 command = String.format(command, dir);
                 ProcessBuilder pb = new ProcessBuilder().command(command.split(" "));
+                Instant then = Instant.now();
 
                 try {
 
@@ -922,7 +927,7 @@ public class Rvn extends Thread {
 
                     processMap.remove(dir);
 
-                        logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + ((p.exitValue() == 0) ? ANSI_GREEN : ANSI_RED) + (p.exitValue() == 0 ? "PASSED" : "FAILED") + " (%2$s)" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_RESET, nvv, +p.exitValue(), command));
+                    logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + ((p.exitValue() == 0) ? ANSI_GREEN : ANSI_RED) + (p.exitValue() == 0 ? "PASSED" : "FAILED") + " (%2$s)" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET, nvv, +p.exitValue(), command, Duration.between(then, Instant.now())));
 
                     if (p.exitValue() != 0) {
                         result.complete(Boolean.FALSE);
@@ -1142,7 +1147,7 @@ public class Rvn extends Thread {
     }
 
     private void easterEgg() {
-        logger.info(new Scanner(Rvn.class.getResourceAsStream("/rvn.txt")).useDelimiter("\\z").next());
+        logger.info(new Scanner(Rvn.class.getResourceAsStream("/rvn.txt")).useDelimiter("\r").next());
     }
 
     class CommandHandler implements Function<String, Void> {

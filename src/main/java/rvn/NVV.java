@@ -55,6 +55,19 @@ public class NVV {
         return hash;
     }
 
+    public boolean equalsVersion(Object obj) {
+
+        final NVV other = (NVV) obj;
+
+        if (!Objects.equals(this, other)) {
+            return false;
+        }
+        if (!Objects.equals(this.version, other.version)) {
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public boolean equals(Object obj) {
         if (this == obj) {
