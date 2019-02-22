@@ -19,11 +19,36 @@ set in your .profile
 > alias rvn='java -jar ~/.m2/repository/mofokom/rvn/1.0-SNAPSHOT/rvn-1.0-SNAPSHOT.jar'
 
 It also supports some basic commands on stdin
-* ! - stop building the current running mvn process(es)
-* ?[regex] - search for artifacts and project files matching the regex e.g. mofokom::rvn:: or rvn4mvn/pom.xml 
-* .*groupId::artifactId::.* - build artifacts matching 
-* code/project/path/to/pom.xml - build artifact at path or artifacts matching path
-* $ - reload configuration and rescan filesystem.
+
+* Command          Example                         Description
+
+* ?                ?                       - Prints the help.
+
+* !                !                       - Stop the current build. Leave the build queue in place
+
+* -                -                       - Hide the output.
+
+* +                +                       - Show the output.
+
+* |                |                       - Show the last failed output.
+
+* .                .                       - Repeat last change that triggered a build.
+
+* !!               !!                      - Stop the current build. Drain out the build queue
+
+* >                >                       - Show the failMap
+
+* @                @                       - Reload the configuration file and rescan filesystem.
+
+* `                `::test::                       - List know project(s) matching coordinate or path expression.
+
+* [groupId]::[artifactId]::[version]               ::test:: mygroup::                      - Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*::test::.* or ::test::
+
+* path             /path/to/pom.xml                        - Builds the project(s) for the given coordinate(s). Supports regexp.
+
+* path             /tmp/to/fail.out                        - Dump the file to stdout
+
+* timeout {number}                 timeout 60                      - Sets the maximum build timeout to 1 minute.
 
 Config file lives at ~/.m2/rvn.json
 ```

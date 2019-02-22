@@ -125,7 +125,8 @@ public class Rvn extends Thread {
         System.out.println(String.format("exited"));
     }
 
-    private Integer timeout = 60;
+    private Duration timeout = Duration.ofSeconds(60); 
+
     private NVV lastNvv;
     private Instant then = null;
 
@@ -780,8 +781,8 @@ public class Rvn extends Thread {
             Pattern pattern = Pattern.compile("^timeout\\s([0-9]+)$");
             Matcher matcher = pattern.matcher(command);
             if (matcher.matches()) {
-                timeout = Integer.parseInt(matcher.group(1));
-                logger.warning(String.format("timeout is %1$d second", timeout));
+                timeout = Duration.ofSeconds(Integer.parseInt(matcher.group(1)));
+                logger.warning(String.format("timeout is %1$s second", timeout.toString()));
             }
             return null;
         }));
@@ -846,7 +847,7 @@ public class Rvn extends Thread {
                 try (Stream<NVV> path = q.paths()) {
                     path.forEach(nvv -> {
                         try {
-                            if (!doBuild(nvv).get(timeout, TimeUnit.MILLISECONDS)) {
+                            if (!doBuild(nvv).get(timeout.toSeconds(), TimeUnit.MILLISECONDS)) {
                                 throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
                                         + ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
                             }
@@ -887,6 +888,9 @@ public class Rvn extends Thread {
 
             for (String command : commandList) {
 
+                if(command.startsWith("!")){
+                    continue;
+                }
                 String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
 
                 if (command.isEmpty()) {
@@ -897,7 +901,7 @@ public class Rvn extends Thread {
                     logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, cmd));
                 }
 
-                if (command.indexOf("-f") == -1) {
+                if (command.indexOf("mvn") > 0 && command.indexOf("-f") == -1) {
                     command = new StringBuilder(command).insert(command.indexOf("mvn") + 3, " -f %1$s").toString();
                 }
 
@@ -921,7 +925,7 @@ public class Rvn extends Thread {
 
                     Process p = pb.start();
                     processMap.put(dir, p);
-                    if (!p.waitFor(timeout, TimeUnit.SECONDS)) {
+                    if (!p.waitFor(timeout.toSeconds(), TimeUnit.SECONDS)) {
                         p.destroyForcibly();
                     }
 
@@ -1113,7 +1117,7 @@ public class Rvn extends Thread {
         }
         if (result.hasMember(key = "timeout")) {
             Integer v = (Integer) result.get(key);
-            timeout = v;
+            timeout = Duration.ofSeconds(v);
             logger.info(key + " " + commands.toString());
         }
     }
