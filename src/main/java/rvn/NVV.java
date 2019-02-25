@@ -34,10 +34,10 @@ public class NVV {
     public String toString() {
         StringBuilder bob = new StringBuilder();
         if (vendor != null) {
-            bob.append(vendor).append("::");
+            bob.append(vendor).append(":");
         }
         if (name != null) {
-            bob.append(name).append("::");
+            bob.append(name).append(":");
         }
 
         if (version != null) {

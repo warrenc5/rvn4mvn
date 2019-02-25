@@ -23,16 +23,16 @@ config = {
     },
     "activeArtifacts": {
         "includes": [
-            ".*::.*"
+            ".*:.*"
         ],
         "excludes": [
-            "org.*::.*"
+            "org.*:.*"
         ]
     },
     "buildCommands": {
-        "::::": "mvn -DskipTests -f %1$s clean install",
+        "::": "mvn -DskipTests -f %1$s clean install",
         "/code/captcha/.*": "mvn -DskipTests -f %1$s -N install",
-        "mofokom::.*": [
+        "mofokom:.*": [
             "mvn -DskipTests -f %1$s install"
         ]
     }

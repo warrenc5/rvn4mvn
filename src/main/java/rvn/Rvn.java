@@ -583,7 +583,7 @@ public class Rvn extends Thread {
     Graph<NVV> q = new Graph<>();
 
     private boolean isNVV(String command) {
-        return command.matches(".*::.*");
+        return command.matches(".*:.*");
     }
 
     private void reloadConfiguration() throws Exception {
@@ -596,13 +596,13 @@ public class Rvn extends Thread {
     private boolean matchNVVCommand(NVV i, String match) {
         StringBuilder bob = new StringBuilder();
         if (match.length() == 0) {
-            match = "::";
+            match = ":";
         }
-        if (match.startsWith("::")) {
+        if (match.startsWith(":")) {
             bob.append(".*");
         }
         bob.append(match);
-        if (match.endsWith("::")) {
+        if (match.endsWith(":")) {
             bob.append(".*");
         }
 
@@ -700,7 +700,7 @@ public class Rvn extends Thread {
             return null;
         }));
 
-        commandHandlers.add(new CommandHandler("`", "`::test::", "List know project(s) matching coordinate or path expression.", (command) -> {
+        commandHandlers.add(new CommandHandler("`", "`:test:", "List know project(s) matching coordinate or path expression.", (command) -> {
             if (command.startsWith("`")) {
                 List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
                 Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
@@ -713,7 +713,7 @@ public class Rvn extends Thread {
             }
             return null;
         }));
-        commandHandlers.add(new CommandHandler("[groupId]::[artifactId]::[version]", "::test:: mygroup::", "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*::test::.* or ::test:: ", (command) -> {
+        commandHandlers.add(new CommandHandler("[groupId]:[artifactId]:[version]", ":test: mygroup:", "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ", (command) -> {
             if (isNVV(command)) {
                 this.buildArtifact.keySet().stream()
                         .filter(n -> matchNVVCommand(n, command))
@@ -972,7 +972,7 @@ public class Rvn extends Thread {
                 .flatMap(e -> e.getValue().stream()).collect(Collectors.toList());
 
         if (commandList.isEmpty()) {
-            commandList.addAll(commands.get("::::"));
+            commandList.addAll(commands.get("::"));
         }
 
         return commandList;
