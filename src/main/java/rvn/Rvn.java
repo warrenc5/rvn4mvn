@@ -833,7 +833,10 @@ public class Rvn extends Thread {
 
         public void run() {
             while (this.isAlive()) {
-                Thread.yield();
+                try {
+                    Thread.currentThread().sleep(500l);
+                } catch (InterruptedException ex) {
+                }
 
                 if (q.isEmpty()) {
                     continue;
