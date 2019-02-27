@@ -529,6 +529,7 @@ public class Rvn extends Thread {
     private void buildDeps(NVV nvv) {
         try {
             this.projects.entrySet().stream()
+                    .filter(e -> !e.getKey().equals(parent.get(nvv)))
                     .filter(e -> e.getValue().stream()
                     .filter(nvv2 -> !nvv2.equals(parent.get(nvv)))
                     .filter(nvv2 -> nvv2.equalsVersion(nvv)).findAny().isPresent())
@@ -860,8 +861,7 @@ public class Rvn extends Thread {
                         } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
                             logger.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + ex.getMessage());
 
-                            //path.close();
-                            //q.clear();
+                            q.clear();
                         }
                     });
                 }
