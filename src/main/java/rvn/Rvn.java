@@ -89,6 +89,7 @@ public class Rvn extends Thread {
     private Map<WatchKey, Path> keyPath;
     private Map<NVV, Path> buildArtifact;
     private List<NVV> buildIndex;
+    private List<NVV> index;
     private Map<Path, NVV> buildPaths;
     private Map<NVV, Set<NVV>> projects;
     private Map<NVV, NVV> parent;
@@ -97,6 +98,7 @@ public class Rvn extends Thread {
 
     private Map<String, List<String>> commands;
 
+    private Set<NVV> agProjects;
     private List<String> matchFileIncludes;
     private List<String> matchFileExcludes;
     private List<String> matchDirIncludes;
@@ -125,7 +127,7 @@ public class Rvn extends Thread {
         System.out.println(String.format("exited"));
     }
 
-    private Duration timeout = Duration.ofSeconds(60); 
+    private Duration timeout = Duration.ofSeconds(60);
 
     private NVV lastNvv;
     private Instant then = null;
@@ -154,6 +156,7 @@ public class Rvn extends Thread {
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
         buildIndex = new ArrayList<>();
+        agProjects = new HashSet<>();
         buildPaths = new LinkedHashMap<>();
         processMap = new LinkedHashMap<>();
         failMap = new LinkedHashMap<>();
@@ -172,6 +175,7 @@ public class Rvn extends Thread {
 
         commandHandlers = new ArrayList<>();
         createCommandHandlers();
+        updateIndex();
     }
 
     private void processStdIn() {
@@ -316,9 +320,11 @@ public class Rvn extends Thread {
                             if (cancelKey.isPresent()) {
                                 cancelKey.get().cancel();
                             }
-
+                            //TODO remove from buildArtifacts
+                            updateIndex();
                         } else if (kind == ENTRY_CREATE) {
                             this.registerPath(child);
+                            updateIndex();
                         } else if (kind == ENTRY_MODIFY) {
                             processPath(child);
                         }
@@ -397,7 +403,7 @@ public class Rvn extends Thread {
                 logger.fine(String.format("no nvv: %1$s", path));
                 return;
             } else {
-                logger.fine(String.format("nvv: %1$s %2$s", path, nvv));
+                logger.info(String.format("nvv: %1$s %2$s", path, nvv));
             }
 
             if (matchNVV(nvv)) {
@@ -453,6 +459,12 @@ public class Rvn extends Thread {
         if (!Objects.isNull(parentNvv)) {
             parent.put(nvv, parentNvv);
             deps.add(parentNvv);
+        }
+
+        NodeList modules = (NodeList) xPath.compile("//modules/module").evaluate(xmlDocument, XPathConstants.NODESET);
+        if (modules.getLength() > 0) {
+            logger.fine(String.format("aggregator project %1$s", nvv.toString()));
+            agProjects.add(nvv);
         }
 
         logger.fine(String.format("tracking %1$s %2$s", nvv.toString(), path));
@@ -669,7 +681,7 @@ public class Rvn extends Thread {
             return null;
         }));
 
-        commandHandlers.add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue", (command) -> {
+        commandHandlers.add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue.", (command) -> {
             if (command.equals("!!")) {
                 this.processMap.values().forEach(p -> stopProcess(p));
                 List<NVV> l = new ArrayList<>();
@@ -682,11 +694,28 @@ public class Rvn extends Thread {
             return null;
         }));
 
-        commandHandlers.add(new CommandHandler(">", ">", "Show the failMap", (command) -> {
+        commandHandlers.add(new CommandHandler(">", ">", "Show the fail map.", (command) -> {
             if (command.equals(">")) {
-                failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
-                    logger.info(String.format(ANSI_CYAN + "%1$s " + ANSI_PURPLE + "%2$s" + ANSI_RESET, e.getKey(), e.getValue()));
-                });
+                index.stream()
+                        .filter(nvv -> failMap.containsKey(nvv))
+                        .filter(nvv -> failMap.get(nvv) != null)
+                        .forEach(nvv -> {
+                            logger.info(String.format(ANSI_GREEN + "%1$s " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(nvv), nvv, failMap.get(nvv)));
+                        });
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler(">[0-9]", ">1", "Show the fail map entry.", (command) -> {
+            if (command.matches(">[0-9]+")) {
+                Integer i = Integer.valueOf(command.substring(1));
+                NVV nvv = buildIndex.get(i);
+                File fail = failMap.get(nvv);
+                try {
+                    writeFileToStdout(fail);
+                } catch (IOException ex) {
+                    logger.warning(ex.getMessage());
+                }
             }
             return null;
         }));
@@ -701,11 +730,9 @@ public class Rvn extends Thread {
             return null;
         }));
 
-        commandHandlers.add(new CommandHandler("`", "`:test:", "List know project(s) matching coordinate or path expression.", (command) -> {
+        commandHandlers.add(new CommandHandler("`", "`:test:", "List known project(s) matching coordinate or path expression.", (command) -> {
             if (command.startsWith("`")) {
-                List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
-                Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
-
+                updateIndex();
                 logger.info(index.stream()
                         .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
                         .map(i -> String.format(ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(i), i, buildArtifact.get(i)))
@@ -724,7 +751,7 @@ public class Rvn extends Thread {
             }
             return null;
         }));
-        commandHandlers.add(new CommandHandler("0-100", "100", "Builds the project(s) for the given project number", (command) -> {
+        commandHandlers.add(new CommandHandler("0-100", "100", "Builds the project(s) for the given project number.", (command) -> {
 
             try {
                 for (String c : command.split(" ")) {
@@ -750,7 +777,7 @@ public class Rvn extends Thread {
             return null;
         }
         ));
-        commandHandlers.add(new CommandHandler("path", "/tmp/to/fail.out", "Dump the file to stdout", (command) -> {
+        commandHandlers.add(new CommandHandler("path", "/tmp/to/fail.out", "Dump the file to stdout.", (command) -> {
             if (command.endsWith(".out")) {
                 if (Files.exists(Paths.get(command))) {
                     try {
@@ -763,7 +790,7 @@ public class Rvn extends Thread {
             return null;
         }
         ));
-        commandHandlers.add(new CommandHandler(">>", ">>", "Dump the first entry in the failMap.", (command) -> {
+        commandHandlers.add(new CommandHandler(">>", ">>", "Dump the first entry in the fail map.", (command) -> {
             if (command.equals(">>")) {
                 failMap.entrySet().stream().findFirst().ifPresent(e -> {
                     if (e.getValue().exists()) {
@@ -787,6 +814,16 @@ public class Rvn extends Thread {
             }
             return null;
         }));
+
+        commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
+            if (command.equals("/")) {
+                failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
+                    Rvn.this.buildDeps(e.getKey());
+                });
+            }
+            return null;
+        }));
+
     }
 
     private void writeHashes() throws IOException {
@@ -828,6 +865,11 @@ public class Rvn extends Thread {
         List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
         index.stream().filter(nvv -> !buildIndex.contains(nvv)).forEach(nvv -> buildIndex.add(nvv));
+    }
+
+    private void updateIndex() {
+        index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
+        Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
     }
 
     class BuildIt extends Thread {
@@ -891,7 +933,7 @@ public class Rvn extends Thread {
 
             for (String command : commandList) {
 
-                if(command.startsWith("!")){
+                if (command.startsWith("!")) {
                     continue;
                 }
                 String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
@@ -906,6 +948,10 @@ public class Rvn extends Thread {
 
                 if (command.indexOf("mvn") > 0 && command.indexOf("-f") == -1) {
                     command = new StringBuilder(command).insert(command.indexOf("mvn") + 3, " -f %1$s").toString();
+                }
+
+                if (agProjects.contains(nvv)) {
+                    command = new StringBuilder(command).insert(command.indexOf("mvn") + 3, " -N").toString();
                 }
 
                 command = String.format(command, dir);
@@ -1188,6 +1234,7 @@ public class Rvn extends Thread {
         boolean isAnsi = System.console() != null && term != null && (term.contains("color") || term.contains("xterm"));
         return isAnsi;
     }
+
     public static final Boolean IS_ANSI = isAnsi();
     public static final String ANSI_RESET = IS_ANSI ? "\u001B[0m" : "";
     public static final String ANSI_BLACK = IS_ANSI ? "\u001B[30m" : "";
