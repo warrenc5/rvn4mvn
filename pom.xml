@@ -58,6 +58,13 @@
             <url>scp://${site.url}/${project.groupId}/${artifactId}</url>
         </site>
     </distributionManagement>
+    <scm>
+        <connection>scm:git:https://github.com/warrenc5/rvn4mvn.git</connection>
+        <developerConnection>scm:git:https://github.com/warrenc5/rvn4mvn.git</developerConnection>
+        <url>https://github.com/warrenc5/rvn4mvn</url>
+        <tag>HEAD</tag>
+    </scm>
+
     <properties>
         <maven.compiler.source>9</maven.compiler.source>
         <maven.compiler.target>9</maven.compiler.target>

@@ -119,7 +119,7 @@ public class Rvn extends Thread {
     boolean showOutput = true;
 
     public static void main(String[] args) throws Exception {
-        Logger.getAnonymousLogger().warning(ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
+        Logger.getAnonymousLogger().warning(ANSI_BOLD + ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
         Rvn rvn = new Rvn();
         rvn.locations.addAll(Arrays.asList(args));
         rvn.start();
@@ -1237,6 +1237,7 @@ public class Rvn extends Thread {
 
     public static final Boolean IS_ANSI = isAnsi();
     public static final String ANSI_RESET = IS_ANSI ? "\u001B[0m" : "";
+    public static final String ANSI_BOLD = IS_ANSI ? "\u001B[1m" : "";
     public static final String ANSI_BLACK = IS_ANSI ? "\u001B[30m" : "";
     public static final String ANSI_RED = IS_ANSI ? "\u001B[31m" : "";
     public static final String ANSI_GREEN = IS_ANSI ? "\u001B[32m" : "";
