@@ -7,11 +7,9 @@
     <version xmlns:mvn="http://maven.apache.org/POM/4.0.0">1.0-SNAPSHOT</version>
     <name>rvn4mvn</name>
     <url xmlns:mvn="http://maven.apache.org/POM/4.0.0">http://www.mofokom.biz/site/${groupId}/${artifactId}/</url>
-
     <build>
         <defaultGoal>install</defaultGoal>
         <plugins>
-
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -44,13 +42,13 @@
         <snapshotRepository>
             <id>mofokom-public</id>
             <name>mofokom-public</name>
-            <url>http://www.mofokom.biz/maven/snapshots-public</url>
+            <url>http://maven.mofokom.mobi/artifactory/snapshots-public</url>
             <uniqueVersion>false</uniqueVersion>
         </snapshotRepository>
         <repository>
             <id>mofokom-public</id>
             <name>mofokom-public</name>
-            <url>http://www.mofokom.biz/maven/release-public</url>
+            <url>http://maven.mofokom.mobi/artifactory/release-public</url>
             <uniqueVersion>false</uniqueVersion>
         </repository>
         <site>
