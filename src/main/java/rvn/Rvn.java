@@ -131,6 +131,7 @@ public class Rvn extends Thread {
 
     private NVV lastNvv;
     private Instant then = null;
+    private Path lastChangeFile;
 
     public Rvn() throws Exception {
         watcher = FileSystems.getDefault().newWatchService();
@@ -193,7 +194,7 @@ public class Rvn extends Thread {
 
     private void processCommand(final String command2) {
         final String command = command2.trim();
-        logger.info(String.format(ANSI_YELLOW + "%1$s" + ANSI_RESET, LocalTime.now()));
+        logger.info(String.format(ANSI_YELLOW + "%1$s" + ANSI_RESET + " last build " + ANSI_YELLOW + "%2$s" + ANSI_RESET + " ago.", LocalTime.now(), Duration.between(then, Instant.now()).toString()));
         commandHandlers.stream().forEach(c -> c.apply(command));
 
         /*
@@ -226,6 +227,8 @@ public class Rvn extends Thread {
                 if (!skipped) {
                     Path parent = path.getParent();
                     watchRecursively(parent);
+                } else {
+                    //logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
             } else {
 
@@ -308,7 +311,7 @@ public class Rvn extends Thread {
                                 logger.info("config changed " + filename);
                                 this.reloadConfiguration();
                             } catch (Throwable ex) {
-                                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                                logger.log(Level.SEVERE, ex.getMessage(), ex);
                             }
                             continue;
                         }
@@ -329,7 +332,7 @@ public class Rvn extends Thread {
                             processPath(child);
                         }
                     } catch (Exception ex) {
-                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                        logger.log(Level.SEVERE, ex.getMessage(), ex);
                     }
                 }
 
@@ -357,9 +360,9 @@ public class Rvn extends Thread {
             processPath(uri);
 
         } catch (XPathExpressionException | SAXException | IOException | ParserConfigurationException ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            logger.log(Level.SEVERE, null, ex);
         } catch (Exception ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            logger.log(Level.SEVERE, null, ex);
         }
     }
 
@@ -408,7 +411,8 @@ public class Rvn extends Thread {
 
             if (matchNVV(nvv)) {
                 lastNvv = nvv;
-                processChange(nvv);
+                this.lastChangeFile = path;
+                processChange(nvv, path);
             }
         } catch (Exception x) {
             logger.warning(String.format("process: %1$s - %2$s", path, x.getMessage()));
@@ -532,7 +536,7 @@ public class Rvn extends Thread {
             hashes.put(path.toString(), this.toSHA1(path));
             writeHashes();
         } catch (IOException ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
         }
 
         qBuild(nvv, nvv);
@@ -946,7 +950,21 @@ public class Rvn extends Thread {
                     logger.info(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, cmd));
                 }
 
-                if (command.indexOf("mvn") > 0 && command.indexOf("-f") == -1) {
+                Pattern testRe = Pattern.compile("^.*src/test/java/(.*Test).java$");
+                Matcher matcher = null;
+
+                if (command.indexOf("mvn") >= 0 && command.endsWith("-Dtest=")) {
+                    if (lastChangeFile != null
+                            && (matcher = testRe.matcher(lastChangeFile.toString())).matches()) {
+
+                        command = String.format(command + "%1$s", matcher.group(1).replaceAll(File.separator, "."));
+                        logger.info(command);
+                    } else {
+                        continue;
+                    }
+                }
+
+                if (command.indexOf("mvn") >= 0 && command.indexOf("-f") == -1) {
                     command = new StringBuilder(command).insert(command.indexOf("mvn") + 3, " -f %1$s").toString();
                 }
 
@@ -993,8 +1011,9 @@ public class Rvn extends Thread {
                     }
 
                     result.complete(p.exitValue() == 0);
+                    Rvn.this.then = Instant.now();
                 } catch (IOException | InterruptedException ex) {
-                    logger.severe(ex.getMessage());
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
                     result.complete(Boolean.FALSE);
                 }
             }
@@ -1017,7 +1036,7 @@ public class Rvn extends Thread {
 
     private List<String> locateCommand(NVV nvv, Path path) {
         List<String> commandList = commands.entrySet().stream()
-                .filter(e -> path.toString().matches(e.getKey()) || nvv.toString().matches(e.getKey()))
+                .filter(e -> commandMatch(e.getKey(), nvv, path))
                 .flatMap(e -> e.getValue().stream()).collect(Collectors.toList());
 
         if (commandList.isEmpty()) {
@@ -1025,6 +1044,10 @@ public class Rvn extends Thread {
         }
 
         return commandList;
+    }
+
+    private boolean commandMatch(String key, NVV nvv, Path path) {
+        return matchNVVCommand(nvv, key) || path.toString().matches(key) || nvv.toString().matches(key);
     }
 
     private boolean isPom(Path path) {
