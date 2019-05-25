@@ -47,12 +47,13 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
     public Stream<NVV> paths() {
         return paths(null);
     }
+
     public Stream<NVV> paths(NVV nvv) {
 
         this.entrySet().stream().flatMap(e -> {
-            return e.getValue().stream().filter(n->(e.getKey().equals(nvv) || nvv == null))
+            return e.getValue().stream().filter(n->(e.getKey().equals(nvv) | nvv == null))
                     .flatMap(v -> {
-                findPrevious2(e.getKey(), v);
+                findAncestor(e.getKey(), v);
                 return q.stream();
             });
         }).distinct().forEach(e -> oq.add(e));
@@ -82,17 +83,17 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
     }
 
     private Collection<NVV> order(NVV a, NVV c) {
-        findPrevious2(a, c);
+        findAncestor(a, c);
         return q;
     }
 
-    private void findPrevious2(NVV n1, NVV n2) {
+    private void findAncestor(NVV n1, NVV n2) {
         this.entrySet().stream().filter(n -> n.getValue().contains(n2))
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-                    logger.fine(n1 + " " + n2 + " " + e.toString()); 
-                    logger.finest(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+                    logger.info(n1 + " " + n2 + " " + e.toString()); 
+                    logger.info(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
 
@@ -101,7 +102,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                     }
 
                     if(!(n1.equals(e.nvv1) && n2.equals(e.nvv2))) {
-                        findPrevious2(n2, e.nvv1);
+                        findAncestor(n2, e.nvv1);
                     }
 
                     q.remove(e.nvv2);

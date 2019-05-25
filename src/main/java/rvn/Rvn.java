@@ -163,7 +163,7 @@ public class Rvn extends Thread {
         failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
-        matchFileIncludes = new ArrayList<>();
+        matchFileIncludes = new ArrayList<>(Arrays.asList(new String[]{".rvn"}));
         matchFileExcludes = new ArrayList<>();
         matchDirIncludes = new ArrayList<>();
         matchDirExcludes = new ArrayList<>();
@@ -172,7 +172,7 @@ public class Rvn extends Thread {
         then = Instant.now();
 
         this.readHashes();
-        loadConfiguration();
+        loadDefaultConfiguration();
 
         commandHandlers = new ArrayList<>();
         createCommandHandlers();
@@ -230,6 +230,9 @@ public class Rvn extends Thread {
                 } else {
                     //logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
+            } else if (path.endsWith(".rvn")) {
+                this.loadConfiguration(path);
+
             } else {
 
             }
@@ -398,6 +401,17 @@ public class Rvn extends Thread {
                 this.buildDeps(nvv);
             }
             return;
+        } else if (path.endsWith(".rvn")) { //todo tidy this up
+            NVV nvv = findPom(path);
+
+            if (nvv == null) {
+                logger.fine(String.format("no nvv: %1$s", path));
+                return;
+            } else {
+                logger.info(String.format("config nvv: %1$s %2$s", path, nvv));
+            }
+            this.loadConfiguration(path);
+            return;
         }
 
         try {
@@ -459,6 +473,7 @@ public class Rvn extends Thread {
         Set<NVV> deps = StreamSupport.stream(splt, true).map(this::processDependency).filter(this::matchNVV).collect(Collectors.toSet());
 
         NVV parentNvv = nvvParent(nvv, xmlDocument);
+        
 
         if (!Objects.isNull(parentNvv)) {
             parent.put(nvv, parentNvv);
@@ -499,9 +514,9 @@ public class Rvn extends Thread {
             if (nvv.version.isEmpty()) {
                 nvv.version = parentNvv.version;
             }
-            logger.fine(String.format("with parent %1$s", nvv.toString()));
         } catch (Exception e) {
         }
+        logger.fine(String.format("%1$s with parent %2$s", nvv.toString(),parentNvv));
         return parentNvv;
     }
 
@@ -606,7 +621,7 @@ public class Rvn extends Thread {
     private void reloadConfiguration() throws Exception {
         keys.forEach(k -> k.cancel());
         this.init();
-        this.loadConfiguration();
+        this.loadDefaultConfiguration();
         this.scan();
     }
 
@@ -876,6 +891,20 @@ public class Rvn extends Thread {
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
     }
 
+    private void loadConfiguration(Path path) {
+        try {
+            URL configURL = path.toUri().toURL();
+            this.loadConfiguration(configURL);
+        } catch (Exception ex) {
+            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+
+    private void loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
+        URL configURL = Rvn.class.getResource("/rvn.json");
+        this.loadConfiguration(configURL);
+    }
+
     class BuildIt extends Thread {
 
         public void run() {
@@ -895,6 +924,9 @@ public class Rvn extends Thread {
                 }
 
                 try (Stream<NVV> path = q.paths()) {
+                    if (path == null) {
+                        continue;
+                    }
                     path.forEach(nvv -> {
                         try {
                             if (!doBuild(nvv).get(timeout.toSeconds(), TimeUnit.MILLISECONDS)) {
@@ -905,7 +937,7 @@ public class Rvn extends Thread {
                             Thread.yield();
 
                         } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
-                            logger.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + ex.getMessage());
+                            logger.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + ex.getClass().getSimpleName() + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace()).subList(0, ex.getStackTrace().length).toString());
 
                             q.clear();
                         }
@@ -951,16 +983,19 @@ public class Rvn extends Thread {
                 }
 
                 Pattern testRe = Pattern.compile("^.*src/test/java/(.*Test).java$");
-                Matcher matcher = null;
 
-                if (command.indexOf("mvn") >= 0 && command.endsWith("-Dtest=")) {
-                    if (lastChangeFile != null
-                            && (matcher = testRe.matcher(lastChangeFile.toString())).matches()) {
+                if (lastChangeFile != null) {
+                    Matcher matcher = testRe.matcher(lastChangeFile.toString());
 
-                        command = String.format(command + "%1$s", matcher.group(1).replaceAll(File.separator, "."));
-                        logger.info(command);
-                    } else {
-                        continue;
+                    if (command.indexOf("mvn") >= 0 && command.endsWith("-Dtest=")) {
+                        if (lastChangeFile != null && matcher != null
+                                && matcher.matches()) {
+
+                            command = String.format(command + "%1$s", matcher.group(1).replaceAll(File.separator, "."));
+                            logger.info(command);
+                        } else {
+                            continue;
+                        }
                     }
                 }
 
@@ -1016,6 +1051,10 @@ public class Rvn extends Thread {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
                     result.complete(Boolean.FALSE);
                 }
+            }
+
+            if (result == null) {
+                logger.info("no commands to build");
             }
 
             return result;
@@ -1109,8 +1148,7 @@ public class Rvn extends Thread {
         return new String(md.digest());
     }
 
-    private void loadConfiguration() throws IOException, ScriptException, URISyntaxException {
-        URL configURL = Rvn.class.getResource("/rvn.json");
+    private void loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
         config = null;
 
         logger.fine(String.format("trying configuration %1$s", configURL));

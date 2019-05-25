@@ -15,7 +15,7 @@ import rvn.NVV;
  *
  * @author wozza
  */
-public class BuildGraph {
+public class BuildGraphTest {
 
     NVV a = new NVV("a"), b = new NVV("b"), c = new NVV("c"), d = new NVV("d"), e = new NVV("e"), f = new NVV("f"), k = new NVV("k"), x = new NVV("x"), y = new NVV("y"), z = new NVV("z");
 
