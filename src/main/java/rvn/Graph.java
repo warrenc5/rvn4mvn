@@ -51,11 +51,11 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
     public Stream<NVV> paths(NVV nvv) {
 
         this.entrySet().stream().flatMap(e -> {
-            return e.getValue().stream().filter(n->(e.getKey().equals(nvv) | nvv == null))
+            return e.getValue().stream().filter(n -> (e.getKey().equals(nvv) | nvv == null))
                     .flatMap(v -> {
-                findAncestor(e.getKey(), v);
-                return q.stream();
-            });
+                        findAncestor(e.getKey(), v);
+                        return q.stream();
+                    });
         }).distinct().forEach(e -> oq.add(e));
         logger.info("q->" + q.toString() + " " + q.size());
         this.clear();
@@ -67,7 +67,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 NVV element = null;
                 try {
                     Thread.yield();
-                    element = oq.poll(10,TimeUnit.MILLISECONDS);
+                    element = oq.poll(10, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException ex) {
                 }
                 if (element == null) {
@@ -77,7 +77,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                     return true;
                 }
             }
-            
+
         };
         return StreamSupport.stream(spliterator, false);
     }
@@ -92,7 +92,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-                    logger.info(n1 + " " + n2 + " " + e.toString()); 
+                    logger.info(n1 + " " + n2 + " " + e.toString());
                     logger.info(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
@@ -101,7 +101,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                         return;
                     }
 
-                    if(!(n1.equals(e.nvv1) && n2.equals(e.nvv2))) {
+                    if (!(n1.equals(e.nvv1) && n2.equals(e.nvv2))) {
                         findAncestor(n2, e.nvv1);
                     }
 

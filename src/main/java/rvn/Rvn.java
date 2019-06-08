@@ -26,6 +26,7 @@ import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -90,7 +91,9 @@ public class Rvn extends Thread {
     private Map<NVV, Path> buildArtifact;
     private List<NVV> buildIndex;
     private List<NVV> index;
+    private List<NVV> toBuild;
     private Map<Path, NVV> buildPaths;
+    private Map<NVV, FileTime> lastBuild;
     private Map<NVV, Set<NVV>> projects;
     private Map<NVV, NVV> parent;
     private Map<NVV, File> failMap;
@@ -159,6 +162,8 @@ public class Rvn extends Thread {
         buildIndex = new ArrayList<>();
         agProjects = new HashSet<>();
         buildPaths = new LinkedHashMap<>();
+        toBuild = new ArrayList<>();
+        lastBuild = new HashMap<>();
         processMap = new LinkedHashMap<>();
         failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
@@ -220,7 +225,7 @@ public class Rvn extends Thread {
                     stream.filter(child -> matchDirectories(child) || matchFiles(child)).forEach(this::registerPath);
                 }
             } else if (path.toFile().toString().endsWith(".pom")) {
-                watchRecursively(path.getParent().getParent());
+                watchRecursively(path.getParent().getParent()); //watch all versions
                 processPom(path);
             } else if (path.endsWith("pom.xml")) {
                 boolean skipped = !processPom(path);
@@ -232,7 +237,6 @@ public class Rvn extends Thread {
                 }
             } else if (path.endsWith(".rvn")) {
                 this.loadConfiguration(path);
-
             } else {
 
             }
@@ -282,6 +286,12 @@ public class Rvn extends Thread {
     @Override
     public void run() {
         scan();
+
+        /**
+         * logger.info(toBuild.toString()); toBuild.forEach(nvv -> {
+         * this.buildDeps(nvv); });
+         *
+         */
         while (this.isAlive()) {
             Thread.yield();
             logger.fine(String.format("waiting.."));
@@ -445,7 +455,7 @@ public class Rvn extends Thread {
     private boolean processPom(Path path) throws SAXException, XPathExpressionException, IOException, ParserConfigurationException {
         Document xmlDocument = loadPom(path);
 
-        NVV nvv = nvvFrom(xmlDocument);
+        NVV nvv = nvvFrom(path);
         if (!matchNVV(nvv)) {
             return false;
         }
@@ -456,7 +466,19 @@ public class Rvn extends Thread {
                 logger.warning(String.format(ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "replaces" + ANSI_PURPLE + " %2$s" + ANSI_RESET, path, oldPath));
             }
 
+            if (this.lastBuild.containsKey(nvv)) {
+                Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
+                Long repoTime = this.lastBuild.get(nvv).to(TimeUnit.SECONDS);
+
+                if (workingTime > repoTime) {
+                    logger.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
+                    toBuild.add(nvv);
+                }
+            }
             buildPaths.put(path, nvv);
+        }
+        if (path.toString().endsWith(".pom")) {
+            this.lastBuild.put(nvv, Files.getLastModifiedTime(path));
         }
 
         String newHash = null;
@@ -473,7 +495,6 @@ public class Rvn extends Thread {
         Set<NVV> deps = StreamSupport.stream(splt, true).map(this::processDependency).filter(this::matchNVV).collect(Collectors.toSet());
 
         NVV parentNvv = nvvParent(nvv, xmlDocument);
-        
 
         if (!Objects.isNull(parentNvv)) {
             parent.put(nvv, parentNvv);
@@ -516,8 +537,13 @@ public class Rvn extends Thread {
             }
         } catch (Exception e) {
         }
-        logger.fine(String.format("%1$s with parent %2$s", nvv.toString(),parentNvv));
+        logger.fine(String.format("%1$s with parent %2$s", nvv.toString(), parentNvv));
         return parentNvv;
+    }
+
+    private NVV nvvFrom(Path path) throws XPathExpressionException, SAXException, IOException, ParserConfigurationException {
+        Document xmlDocument = loadPom(path);
+        return nvvFrom(xmlDocument);
     }
 
     private NVV nvvFrom(Document xmlDocument) throws XPathExpressionException {
@@ -590,7 +616,7 @@ public class Rvn extends Thread {
     private void qBuild(NVV nvv, NVV next) {
         Path dir = buildArtifact.get(nvv);
 
-        if (!dir.endsWith("pom.xml")) {
+        if (!dir.toString().endsWith("pom.xml")) {
             return;
         } else {
             try {
@@ -893,8 +919,16 @@ public class Rvn extends Thread {
 
     private void loadConfiguration(Path path) {
         try {
+            NVV nvv = null;
+            if (path.endsWith(".rvn")) {
+                Path project = path.getParent().resolve("pom.xml");
+                if (project.toFile().exists()) {
+                    nvv = nvvFrom(project);
+                    logger.info("module configuration found for " + nvv);
+                }
+            }
             URL configURL = path.toUri().toURL();
-            this.loadConfiguration(configURL);
+            this.loadConfiguration(configURL, nvv);
         } catch (Exception ex) {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -1149,6 +1183,10 @@ public class Rvn extends Thread {
     }
 
     private void loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
+        this.loadConfiguration(configURL, null);
+    }
+
+    private void loadConfiguration(URL configURL, NVV nvv) throws IOException, ScriptException, URISyntaxException {
         config = null;
 
         logger.fine(String.format("trying configuration %1$s", configURL));
@@ -1177,6 +1215,9 @@ public class Rvn extends Thread {
 
         Reader scriptReader = Files.newBufferedReader(config);
         jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine().eval(scriptReader);
+        if (nvv != null) {
+            result.put("projectCoordinates", nvv.toString());
+        }
         buildConfiguration(result);
 
     }
@@ -1222,8 +1263,12 @@ public class Rvn extends Thread {
 
         if (result.hasMember(key = "buildCommands")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            v.entrySet().forEach(e -> commands.put(e.getKey(), optionalArray(e.getValue())));
-            logger.info(key + " " + commands.toString());
+            if (v.isArray()) {
+                v.values().forEach(e -> commands.put(result.get("projectCoordinates").toString(), optionalArray(e)));
+            } else {
+                v.entrySet().forEach(e -> commands.put(e.getKey(), optionalArray(e.getValue())));
+            }
+            logger.fine(commands.toString());
         }
         if (result.hasMember(key = "timeout")) {
             Integer v = (Integer) result.get(key);
