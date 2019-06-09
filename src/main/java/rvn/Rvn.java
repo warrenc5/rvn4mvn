@@ -35,6 +35,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -292,6 +293,13 @@ public class Rvn extends Thread {
          * this.buildDeps(nvv); });
          *
          */
+        Collections.sort(this.toBuild, new Comparator<NVV>() {
+            @Override
+            public int compare(NVV o1, NVV o2) {
+                return Long.compare(Rvn.this.buildIndex.indexOf(o1), Rvn.this.buildIndex.indexOf(o2));
+            }
+        });
+
         while (this.isAlive()) {
             Thread.yield();
             logger.fine(String.format("waiting.."));
@@ -472,7 +480,9 @@ public class Rvn extends Thread {
 
                 if (workingTime > repoTime) {
                     logger.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
-                    toBuild.add(nvv);
+                    if (!toBuild.contains(nvv)) {
+                        toBuild.add(nvv);
+                    }
                 }
             }
             buildPaths.put(path, nvv);
@@ -667,6 +677,13 @@ public class Rvn extends Thread {
         return i.toString().matches(bob.toString());
     }
 
+    private String prettyDuration(Duration d) {
+        if (d.toHours() > 24) {
+            return d.toDays() + " days";
+        }
+        return d.toString();
+    }
+
     private void createCommandHandlers() {
 
         commandHandlers.add(new CommandHandler("?", "?", "Prints the help.", (command) -> {
@@ -771,6 +788,16 @@ public class Rvn extends Thread {
                 } catch (Exception ex) {
                     logger.warning(ex.getMessage());
                 }
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler("\\", "\\", "List yet to build list", (command) -> {
+            if (command.startsWith("\\")) {
+                logger.info(this.toBuild.stream()
+                        .map(i -> String.format(ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET + ANSI_WHITE + " %4$s", this.buildIndex.indexOf(i), i.toString(), this.buildArtifact.get(i), prettyDuration(Duration.between(this.lastBuild.getOrDefault(i, FileTime.from(Instant.now())).toInstant(), Instant.now()))))
+                        .collect(Collectors.joining("," + System.lineSeparator(), "", ""))
+                );
             }
             return null;
         }));
