@@ -138,6 +138,12 @@ public class Rvn extends Thread {
     private Path lastChangeFile;
 
     public Rvn() throws Exception {
+        this.setName("Rvn_Main");
+
+        this.setDefaultUncaughtExceptionHandler((e, t) -> {
+            logger.log(Level.WARNING, e.getName() + " " + t.getMessage(), t);
+        });
+
         watcher = FileSystems.getDefault().newWatchService();
         try {
             md = MessageDigest.getInstance("SHA-1");
@@ -146,10 +152,8 @@ public class Rvn extends Thread {
         }
 
         init();
+
         BuildIt buildIt = new BuildIt();
-        buildIt.setDefaultUncaughtExceptionHandler((e, t) -> {
-            logger.warning(e.getName() + " " + t.getMessage());
-        });
         buildIt.start();
     }
 
@@ -282,6 +286,14 @@ public class Rvn extends Thread {
         logger.info(String.format(ANSI_WHITE + "%1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET, buildPaths.size(), projects.size(), keys.size(), duration.toString()));
 
         this.buildIndex();
+
+        Collections.sort(this.toBuild, new Comparator<NVV>() {
+            @Override
+            public int compare(NVV o1, NVV o2) {
+                return Long.compare(Rvn.this.buildIndex.indexOf(o1), Rvn.this.buildIndex.indexOf(o2));
+            }
+        });
+
     }
 
     @Override
@@ -293,13 +305,6 @@ public class Rvn extends Thread {
          * this.buildDeps(nvv); });
          *
          */
-        Collections.sort(this.toBuild, new Comparator<NVV>() {
-            @Override
-            public int compare(NVV o1, NVV o2) {
-                return Long.compare(Rvn.this.buildIndex.indexOf(o1), Rvn.this.buildIndex.indexOf(o2));
-            }
-        });
-
         while (this.isAlive()) {
             Thread.yield();
             logger.fine(String.format("waiting.."));
@@ -469,19 +474,32 @@ public class Rvn extends Thread {
         }
 
         if (path.endsWith("pom.xml")) {
-            Path oldPath = buildArtifact.put(nvv, path);
+            Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
+
+            Path oldPath = buildArtifact.get(nvv);
             if (oldPath != null && !oldPath.equals(path)) {
-                logger.warning(String.format(ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "replaces" + ANSI_PURPLE + " %2$s" + ANSI_RESET, path, oldPath));
+                Long otherTime = Files.getLastModifiedTime(oldPath).to(TimeUnit.SECONDS);
+                if (workingTime > otherTime) {
+                    logger.warning(String.format(ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "newer than" + ANSI_PURPLE + " %2$s" + ANSI_CYAN + " %3$s" + ANSI_RED + ", replacing" + ANSI_RESET, path, oldPath, nvv.toString()));
+                } else {
+                    logger.warning(String.format(ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "older than" + ANSI_PURPLE + " %2$s" + ANSI_CYAN + " %3$s" + ANSI_RESET + ", ignoring", path, oldPath, nvv.toString()));
+                    return false;
+                }
             }
 
+            this.buildArtifact.put(nvv, path);
+
             if (this.lastBuild.containsKey(nvv)) {
-                Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
                 Long repoTime = this.lastBuild.get(nvv).to(TimeUnit.SECONDS);
 
                 if (workingTime > repoTime) {
-                    logger.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
                     if (!toBuild.contains(nvv)) {
+                        logger.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
                         toBuild.add(nvv);
+                    }
+                } else {
+                    if (toBuild.contains(nvv)) {
+                        toBuild.remove(nvv);
                     }
                 }
             }
@@ -802,6 +820,13 @@ public class Rvn extends Thread {
             return null;
         }));
 
+        commandHandlers.add(new CommandHandler("\\\\", "\\\\", "Build all yet to build list", (command) -> {
+            if (command.startsWith("\\\\")) {
+                this.toBuild.stream().forEach(nvv -> this.buildDeps(nvv));
+            }
+            return null;
+        }));
+
         commandHandlers.add(new CommandHandler("`", "`:test:", "List known project(s) matching coordinate or path expression.", (command) -> {
             if (command.startsWith("`")) {
                 updateIndex();
@@ -968,6 +993,13 @@ public class Rvn extends Thread {
 
     class BuildIt extends Thread {
 
+        public BuildIt() {
+            this.setName("BuildIt");
+            this.setDefaultUncaughtExceptionHandler((e, t) -> {
+                logger.log(Level.WARNING, e.getName() + " " + t.getMessage(), t);
+            });
+        }
+
         public void run() {
             while (this.isAlive()) {
                 try {
@@ -1014,13 +1046,13 @@ public class Rvn extends Thread {
 
             Path dir = buildArtifact.get(nvv);
             if (dir == null) {
-                logger.info(String.format("no pom % 1$s ", nvv));
+                logger.info(String.format("no pom " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
                 result.complete(Boolean.TRUE);
                 return result;
             }
 
             if (processMap.containsKey(dir)) {
-                logger.info(String.format("already building % 1$s ", nvv));
+                logger.info(String.format("already building " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
                 result.complete(Boolean.TRUE);
                 return result;
                 //processMap.get(path).destroyForcibly(); }
@@ -1116,6 +1148,10 @@ public class Rvn extends Thread {
 
             if (result == null) {
                 logger.info("no commands to build");
+            }
+
+            if (result != null && result.getNow(Boolean.FALSE)) {
+                dir.toFile().setLastModified(Instant.now().toEpochMilli());
             }
 
             return result;
