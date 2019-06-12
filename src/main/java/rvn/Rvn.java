@@ -109,6 +109,7 @@ public class Rvn extends Thread {
     private List<String> matchDirExcludes;
     private List<String> matchArtifactIncludes;
     private List<String> matchArtifactExcludes;
+    private List<String> configFileNames;
     private List<CommandHandler> commandHandlers;
 
     private Logger logger = Logger.getLogger(Rvn.class.getName());
@@ -173,7 +174,8 @@ public class Rvn extends Thread {
         failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
-        matchFileIncludes = new ArrayList<>(Arrays.asList(new String[]{".rvn"}));
+        configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
+        matchFileIncludes = new ArrayList<>(configFileNames);
         matchFileExcludes = new ArrayList<>();
         matchDirIncludes = new ArrayList<>();
         matchDirExcludes = new ArrayList<>();
@@ -240,7 +242,7 @@ public class Rvn extends Thread {
                 } else {
                     //logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
-            } else if (path.endsWith(".rvn")) {
+            } else if (this.configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
             } else {
 
@@ -424,7 +426,7 @@ public class Rvn extends Thread {
                 this.buildDeps(nvv);
             }
             return;
-        } else if (path.endsWith(".rvn")) { //todo tidy this up
+        } else if (this.configFileNames.contains(path.getFileName().toString())) {
             NVV nvv = findPom(path);
 
             if (nvv == null) {
@@ -972,7 +974,7 @@ public class Rvn extends Thread {
     private void loadConfiguration(Path path) {
         try {
             NVV nvv = null;
-            if (path.endsWith(".rvn")) {
+            if (this.configFileNames.contains(path.getFileName().toString())) {
                 Path project = path.getParent().resolve("pom.xml");
                 if (project.toFile().exists()) {
                     nvv = nvvFrom(project);
@@ -989,6 +991,16 @@ public class Rvn extends Thread {
     private void loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
         URL configURL = Rvn.class.getResource("/rvn.json");
         this.loadConfiguration(configURL);
+    }
+
+    private void addCommand(String projectKey, List<String> newCommandList) {
+        commands.compute(projectKey, (key, oldValue) -> {
+            List<String> newList = new ArrayList<>(newCommandList);
+            if (oldValue != null) {
+                newList.addAll(oldValue);
+            }
+            return newList;
+        });
     }
 
     class BuildIt extends Thread {
@@ -1176,7 +1188,11 @@ public class Rvn extends Thread {
                 .flatMap(e -> e.getValue().stream()).collect(Collectors.toList());
 
         if (commandList.isEmpty()) {
-            commandList.addAll(commands.get("::"));
+            if (commands.containsKey("::")) {
+                commandList.addAll(commands.get("::"));
+            } else {
+                logger.warning("No project commands or default commands, check your config has buildCommands for ::");
+            }
         }
 
         return commandList;
@@ -1327,9 +1343,9 @@ public class Rvn extends Thread {
         if (result.hasMember(key = "buildCommands")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             if (v.isArray()) {
-                v.values().forEach(e -> commands.put(result.get("projectCoordinates").toString(), optionalArray(e)));
+                v.values().forEach(e -> this.addCommand(result.get("projectCoordinates").toString(), optionalArray(e)));
             } else {
-                v.entrySet().forEach(e -> commands.put(e.getKey(), optionalArray(e.getValue())));
+                v.entrySet().forEach(e -> this.addCommand(e.getKey(), optionalArray(e.getValue())));
             }
             logger.fine(commands.toString());
         }
