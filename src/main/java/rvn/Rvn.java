@@ -681,20 +681,28 @@ public class Rvn extends Thread {
         this.scan();
     }
 
-    private boolean matchNVVCommand(NVV i, String match) {
+    private String expandNVVRegex(String match) {
         StringBuilder bob = new StringBuilder();
         if (match.length() == 0) {
             match = ":";
         }
         if (match.startsWith(":")) {
-            bob.append(".*");
+            bob.insert(0, ".*");
         }
         bob.append(match);
         if (match.endsWith(":")) {
             bob.append(".*");
         }
+        //logger.finest("matching " + match + " "+ bob.toString());
+        return bob.toString();
+    }
 
-        return i.toString().matches(bob.toString());
+    private boolean matchNVVCommand(String project, String match) {
+        return project.matches(this.expandNVVRegex(match));
+    }
+
+    private boolean matchNVVCommand(NVV project, String match) {
+        return project.toString().matches(this.expandNVVRegex(match));
     }
 
     private String prettyDuration(Duration d) {
@@ -829,13 +837,28 @@ public class Rvn extends Thread {
             return null;
         }));
 
-        commandHandlers.add(new CommandHandler("`", "`:test:", "List known project(s) matching coordinate or path expression.", (command) -> {
+        commandHandlers.add(new CommandHandler("`", "`[:test:|#]", "List known project(s) matching coordinate or path expression.", (command) -> {
             if (command.startsWith("`")) {
                 updateIndex();
                 logger.info(index.stream()
                         .filter(i -> matchNVVCommand(i, command.substring(1)) || this.buildArtifact.get(i).toString().matches(command.substring(1)))
                         .map(i -> String.format(ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(i), i, buildArtifact.get(i)))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", ""))
+                );
+            }
+            return null;
+        }));
+
+        commandHandlers.add(new CommandHandler("=", "=:test:", "List build commands for project", (command) -> {
+            if (command.startsWith("=")) {
+
+                logger.info(this.commands.keySet().stream()
+                        .filter(i -> matchNVVCommand(i, command.length() == 1 ? ".*" : command.substring(1)))
+                        .map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
+                        this.commands.get(i).stream()
+                                .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
+                                .collect(Collectors.joining("," + System.lineSeparator(), System.lineSeparator(), ""))
+                )).collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator()))
                 );
             }
             return null;
@@ -994,6 +1017,9 @@ public class Rvn extends Thread {
     }
 
     private void addCommand(String projectKey, List<String> newCommandList) {
+        if (logger.isLoggable(Level.FINEST)) {
+            logger.finest("==" + projectKey + " " + newCommandList.toString());
+        }
         commands.compute(projectKey, (key, oldValue) -> {
             List<String> newList = new ArrayList<>(newCommandList);
             if (oldValue != null) {
