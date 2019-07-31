@@ -1,5 +1,10 @@
 package rvn;
 
+import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
+import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -19,10 +24,6 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
-import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
-import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
-import static java.nio.file.StandardWatchEventKinds.OVERFLOW;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
@@ -40,6 +41,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -50,7 +52,7 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -63,6 +65,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+
 import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import javax.script.ScriptException;
@@ -73,12 +76,14 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
+
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 import org.xml.sax.ext.DefaultHandler2;
+
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
 
 /**
  *
@@ -122,6 +127,14 @@ public class Rvn extends Thread {
 	private String mvnCmd;
 	boolean ee = false;
 	boolean showOutput = true;
+
+	private File tf = null;
+	private Boolean interrupt;
+	private Duration batchWait;
+	private Map<NVV, Duration> batchWaitMap;
+	private Map<NVV, Boolean> interruptMap;
+
+	private Map<NVV, ScheduledFuture> futureMap = new HashMap<>();
 
 	public static void main(String[] args) throws Exception {
 		Logger.getAnonymousLogger().warning(ANSI_BOLD + ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
@@ -182,6 +195,9 @@ public class Rvn extends Thread {
 		matchArtifactIncludes = new ArrayList<>();
 		matchArtifactExcludes = new ArrayList<>();
 		then = Instant.now();
+		batchWait = Duration.ofSeconds(0);
+		batchWaitMap = new HashMap<>();
+		interruptMap = new HashMap<>();
 
 		this.readHashes();
 		loadDefaultConfiguration();
@@ -454,7 +470,7 @@ public class Rvn extends Thread {
 			if (matchNVV(nvv)) {
 				lastNvv = nvv;
 				this.lastChangeFile = path;
-				processChange(nvv, path);
+				processChange(nvv, path, false);
 			}
 		} catch (Exception x) {
 			logger.warning(String.format("process: %1$s - %2$s", path, x.getMessage()));
@@ -609,12 +625,16 @@ public class Rvn extends Thread {
 				xPath.compile("version").evaluate(context));
 	}
 
+	private void processChangeImmediatley(NVV nvv) {
+		processChange(nvv, buildArtifact.get(nvv), true);
+	}
+
 	private NVV processChange(NVV nvv) {
-		processChange(nvv, buildArtifact.get(nvv));
+		processChange(nvv, buildArtifact.get(nvv), false);
 		return nvv;
 	}
 
-	private void processChange(NVV nvv, Path path) {
+	private void processChange(NVV nvv, Path path, boolean immediate) {
 		logger.info(String.format(
 				"changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_YELLOW + " %3$s" + ANSI_RESET,
 				nvv.toString(), path, LocalTime.now().toString()));
@@ -626,7 +646,40 @@ public class Rvn extends Thread {
 			Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
 		}
 
-		qBuild(nvv, nvv);
+		Boolean interrupt = interruptMap.getOrDefault(nvv, this.interrupt);
+
+		if (interrupt) {
+
+			Path dir = buildArtifact.get(nvv);
+
+			this.processMap.computeIfPresent(dir, (key, p) -> {
+				logger.info(String.format("destroying process %1$s", nvv));
+				p.destroyForcibly();
+				return null;
+			});
+
+		}
+
+		futureMap.computeIfPresent(nvv, (nvv1, future) -> {
+			future.cancel(interrupt);
+			return null;
+			
+		});
+
+		Duration batchWait = immediate ? Duration.ZERO : batchWaitMap.getOrDefault(nvv, this.batchWait);
+
+		futureMap.computeIfAbsent(nvv, (nvv1) -> {
+			logger.fine(String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
+			ScheduledFuture<?> future = executor.schedule(() -> {
+				logger.fine(
+						String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
+				qBuild(nvv, nvv);
+				futureMap.remove(nvv);
+				return null;
+			}, batchWait.toMillis(), TimeUnit.MILLISECONDS);
+			return future;
+		});
+
 	}
 
 	private void buildDeps(NVV nvv) {
@@ -661,9 +714,10 @@ public class Rvn extends Thread {
 																													// absolutely
 	}
 
-	ExecutorService executor = new ScheduledThreadPoolExecutor(5);
+	ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(1);
 
 	private void qBuild(NVV nvv, NVV next) {
+
 		Path dir = buildArtifact.get(nvv);
 
 		if (!dir.toString().endsWith("pom.xml")) {
@@ -911,7 +965,7 @@ public class Rvn extends Thread {
 							int i = Integer.parseInt(c);
 
 							if (buildIndex.size() > i) {
-								this.processChange(buildIndex.get(i));
+								this.processChangeImmediatley(buildIndex.get(i));
 							}
 						}
 					} catch (NumberFormatException n) {
@@ -981,6 +1035,22 @@ public class Rvn extends Thread {
 			return null;
 		}));
 
+		commandHandlers.add(new CommandHandler("[enter]", "", "Proceed with all builds waiting.", (command) -> {
+			if (command.trim().length() == 0) {
+				logger.info("resubmitting all scheduled builds");
+
+				futureMap.forEach((nvv, future) -> {
+					this.executor.submit(() -> {
+						future.cancel(true);
+
+						qBuild(nvv, nvv);
+						futureMap.remove(nvv);
+						return null;
+					});
+				});
+			}
+			return null;
+		}));
 	}
 
 	private void writeHashes() throws IOException {
@@ -1017,8 +1087,6 @@ public class Rvn extends Thread {
 	private void stopProcess(Process p) {
 		p.destroyForcibly();
 	}
-
-	private File tf = null;
 
 	private void buildIndex() {
 		List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
@@ -1058,6 +1126,7 @@ public class Rvn extends Thread {
 		if (logger.isLoggable(Level.FINEST)) {
 			logger.finest("==" + projectKey + " " + newCommandList.toString());
 		}
+
 		commands.compute(projectKey, (key, oldValue) -> {
 			List<String> newList = new ArrayList<>(newCommandList);
 			if (oldValue != null) {
@@ -1065,6 +1134,8 @@ public class Rvn extends Thread {
 			}
 			return newList;
 		});
+
+		logger.info(projectKey + "  " + commands.get(projectKey).toString());
 	}
 
 	class BuildIt extends Thread {
@@ -1138,11 +1209,15 @@ public class Rvn extends Thread {
 
 			List<String> commandList = locateCommand(nvv, dir); // nice to have different commands for different paths
 
+			logger.info(nvv + "=>" + commandList.toString());
 			for (String command : commandList) {
 
 				if (command.startsWith("!")) {
 					continue;
 				}
+
+				command = command.replace("mvn ", mvnCmd + " ");
+
 				String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
 
 				if (command.isEmpty()) {
@@ -1155,8 +1230,6 @@ public class Rvn extends Thread {
 							cmd));
 				}
 
-				cmd.replaceAll("^mvn ", mvnCmd);
-				
 				Pattern testRe = Pattern.compile("^.*src/test/java/(.*Test).java$");
 
 				if (lastChangeFile != null) {
@@ -1184,7 +1257,8 @@ public class Rvn extends Thread {
 				}
 
 				command = String.format(command, dir);
-				ProcessBuilder pb = new ProcessBuilder().directory(dir.getParent().toFile()).command(command.split(" "));
+				ProcessBuilder pb = new ProcessBuilder().directory(dir.getParent().toFile())
+						.command(command.split(" "));
 				Instant then = Instant.now();
 
 				try {
@@ -1230,6 +1304,8 @@ public class Rvn extends Thread {
 				} catch (IOException | InterruptedException ex) {
 					logger.log(Level.SEVERE, ex.getMessage(), ex);
 					result.complete(Boolean.FALSE);
+				} finally {
+
 				}
 			}
 
@@ -1370,37 +1446,43 @@ public class Rvn extends Thread {
 		jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine()
 				.eval(scriptReader);
 		if (nvv != null) {
-			result.put("projectCoordinates", nvv.toString());
+			result.put("projectCoordinates", nvv);
 		}
 		buildConfiguration(result);
 
 	}
 
 	private void buildConfiguration(ScriptObjectMirror result) {
+		Optional<NVV> oNvv = Optional.ofNullable((NVV) result.get("projectCoordinates"));
 
 		String key = null;
 		if (result.hasMember(key = "mvnCmd")) {
 			this.mvnCmd = (String) result.get(key);
-			logger.info(key + " " + mvnCmd);
+
 		} else {
-			mvnCmd = System.getProperty("os.name").contains("win") ? "mvn.cmd" : "mvn";
+			logger.fine(System.getProperty("os.name"));
+			this.mvnCmd = System.getProperty("os.name").regionMatches(true, 0, "windows", 0, 7) ? "mvn.cmd" : "mvn";
 		}
+
+		logger.info(key + " " + mvnCmd + " because os.name=" + System.getProperty("os.name")
+				+ " override with mvnCmd: 'mvn' in config file");
+
 		if (result.hasMember(key = "showOutput")) {
 			this.showOutput = (Boolean) result.get(key);
-			logger.info(key + " " + this.showOutput);
+			logger.fine(key + " " + this.showOutput);
 		}
 		if (result.hasMember(key = "locations")) {
 			ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
 			locations.addAll(asArray(v));
-			logger.info(key + " " + locations.toString());
+			logger.fine(key + " " + locations.toString());
 
 		}
 		if (result.hasMember(key = "watchDirectories")) {
 			ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
 			this.matchDirIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
 			this.matchDirExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
-			logger.info(key + " includes " + matchDirIncludes.toString());
-			logger.info(key + " excludes " + matchDirExcludes.toString());
+			logger.fine(key + " includes " + matchDirIncludes.toString());
+			logger.fine(key + " excludes " + matchDirExcludes.toString());
 		}
 
 		if (result.hasMember(key = "activeFiles")) {
@@ -1408,8 +1490,8 @@ public class Rvn extends Thread {
 			this.matchFileIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
 			this.matchFileExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
 
-			logger.info(key + " includes " + matchFileIncludes.toString());
-			logger.info(key + " excludes " + matchFileExcludes.toString());
+			logger.fine(key + " includes " + matchFileIncludes.toString());
+			logger.fine(key + " excludes " + matchFileExcludes.toString());
 		}
 
 		if (result.hasMember(key = "activeArtifacts")) {
@@ -1417,23 +1499,51 @@ public class Rvn extends Thread {
 			this.matchArtifactIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
 			this.matchArtifactExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
 
-			logger.info(key + " includes " + matchArtifactIncludes.toString());
-			logger.info(key + " excludes " + matchArtifactExcludes.toString());
+			logger.fine(key + " includes " + matchArtifactIncludes.toString());
+			logger.fine(key + " excludes " + matchArtifactExcludes.toString());
 		}
 
 		if (result.hasMember(key = "buildCommands")) {
 			ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
 			if (v.isArray()) {
-				v.values().forEach(e -> this.addCommand(result.get("projectCoordinates").toString(), optionalArray(e)));
+				v.values().stream().collect(Collectors.toCollection(LinkedList::new)).descendingIterator()
+						.forEachRemaining(e -> this.addCommand(oNvv.get().toString(), optionalArray(e)));
 			} else {
 				v.entrySet().forEach(e -> this.addCommand(e.getKey(), optionalArray(e.getValue())));
 			}
 			logger.fine(commands.toString());
 		}
+
 		if (result.hasMember(key = "timeout")) {
 			Integer v = (Integer) result.get(key);
 			timeout = Duration.ofSeconds(v);
-			logger.info(key + " " + commands.toString());
+			logger.fine(key + " " + timeout);
+		}
+
+		if (result.hasMember(key = "batchWait")) {
+			Integer v = (Integer) result.get(key);
+			if (oNvv.isPresent()) {
+				batchWaitMap.put(oNvv.get(), Duration.ofSeconds(v));
+			} else {
+				batchWait = Duration.ofSeconds(v);
+			}
+			logger.fine(key + " " + batchWait);
+		}
+
+		if (result.hasMember(key = "interrupt")) {
+			Boolean v = (Boolean) result.get(key);
+
+			if (oNvv.isPresent()) {
+				interruptMap.put(oNvv.get(), v);
+			} else {
+				interrupt = v;
+			}
+			logger.fine(key + " " + interrupt);
+		}
+
+		if (oNvv != null) {
+			logger.fine("add project specific settings");
+
 		}
 	}
 
