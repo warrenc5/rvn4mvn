@@ -140,10 +140,14 @@ public class Rvn extends Thread {
 	private File tf = null;
 	private Boolean interrupt;
 	private String mvnOpts;
+	private String mvnArgs;
 	private Duration batchWait;
+	private Map<NVV, String> mvnCmdMap;
 	private Map<NVV, Duration> batchWaitMap;
+	private Map<NVV, Duration> timeoutMap;
 	private Map<NVV, Boolean> interruptMap;
 	private Map<NVV, String> mvnOptsMap;
+	private Map<NVV, String> mvnArgsMap;
 
 	private Map<NVV, ScheduledFuture> futureMap = new HashMap<>();
 
@@ -169,6 +173,7 @@ public class Rvn extends Thread {
 			logger.log(Level.WARNING, e.getName() + " " + t.getMessage(), t);
 		});
 
+		System.out.print(ANSI_RESET + ANSI_RESET + ANSI_WHITE);
 		watcher = FileSystems.getDefault().newWatchService();
 		try {
 			md = MessageDigest.getInstance("SHA-1");
@@ -208,10 +213,14 @@ public class Rvn extends Thread {
 		matchArtifactExcludes = new ArrayList<>();
 		then = Instant.now();
 		batchWait = Duration.ofSeconds(0);
+		mvnCmdMap = new HashMap<>();
 		batchWaitMap = new HashMap<>();
+		timeoutMap = new HashMap<>();
 		interruptMap = new HashMap<>();
 		mvnOptsMap = new HashMap<>();
+		mvnArgsMap = new HashMap<>();
 		mvnOpts = "";
+		mvnArgs = "";
 
 		this.readHashes();
 		loadDefaultConfiguration();
@@ -1251,7 +1260,7 @@ public class Rvn extends Thread {
 					}
 					path.forEach(nvv -> {
 						try {
-							if (!doBuild(nvv).get(timeout.toSeconds(), TimeUnit.MILLISECONDS)) {
+							if (!doBuild(nvv).get(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)) {
 								throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
 										+ ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
 							}
@@ -1295,13 +1304,16 @@ public class Rvn extends Thread {
 			List<String> commandList = locateCommand(nvv, dir); // nice to have different commands for different paths
 
 			logger.info(nvv + "=>" + commandList.toString());
+
 			for (String command : commandList) {
 
 				if (command.startsWith("!")) {
 					continue;
 				}
 
-				command = command.replace("mvn ", mvnCmd + " " + mvnOptsMap.getOrDefault(nvv, mvnOpts) + " ");
+				String mvnCmd = mvnCmdMap.getOrDefault(nvv, Rvn.this.mvnCmd);
+				String mvnOpts = mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
+				command = command.replace("mvn ", mvnCmd + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ");
 
 				String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
 
@@ -1360,12 +1372,13 @@ public class Rvn extends Thread {
 					}
 
 					pb.environment().putAll(System.getenv());
+					pb.environment().put("maven.opts",mvnOpts);
 
 					p = pb.start();
 
 					processMap.put(dir, p);
 
-					if (!p.waitFor(timeout.toSeconds(), TimeUnit.SECONDS)) {
+					if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)){
 						stopProcess(p);
 					}
 
@@ -1543,11 +1556,18 @@ public class Rvn extends Thread {
 
 		String key = null;
 		if (result.hasMember(key = "mvnCmd")) {
-			this.mvnCmd = (String) result.get(key);
+
+			if (oNvv.isPresent()) {
+				mvnCmdMap.put(oNvv.get(), (String) result.get(key));
+			} else {
+				this.mvnCmd = (String) result.get(key);
+			}
 
 		} else {
-			logger.fine(System.getProperty("os.name"));
-			this.mvnCmd = System.getProperty("os.name").regionMatches(true, 0, "windows", 0, 7) ? "mvn.cmd" : "mvn";
+			if (!oNvv.isPresent()) {
+				logger.fine(System.getProperty("os.name"));
+				this.mvnCmd = System.getProperty("os.name").regionMatches(true, 0, "windows", 0, 7) ? "mvn.cmd" : "mvn";
+			}
 		}
 
 		logger.info(key + " " + mvnCmd + " because os.name=" + System.getProperty("os.name")
@@ -1602,7 +1622,12 @@ public class Rvn extends Thread {
 
 		if (result.hasMember(key = "timeout")) {
 			Integer v = (Integer) result.get(key);
-			timeout = Duration.ofSeconds(v);
+
+			if (oNvv.isPresent()) {
+				timeoutMap.put(oNvv.get(), Duration.ofSeconds(v));
+			} else {
+				timeout = Duration.ofSeconds(v);
+			}
 			logger.fine(key + " " + timeout);
 		}
 
@@ -1614,6 +1639,16 @@ public class Rvn extends Thread {
 				mvnOpts = v.toString();
 			}
 			logger.fine(key + " " + mvnOpts);
+		}
+
+		if (result.hasMember(key = "mvnArgs")) {
+			String v = (String) result.get(key);
+			if (oNvv.isPresent()) {
+				mvnArgsMap.put(oNvv.get(), v.toString());
+			} else {
+				mvnArgs = v.toString();
+			}
+			logger.fine(key + " " + mvnArgs);
 		}
 
 		if (result.hasMember(key = "batchWait")) {
