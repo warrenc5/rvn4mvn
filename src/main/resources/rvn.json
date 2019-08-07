@@ -1,5 +1,11 @@
 config = {
-    "showOutput" : true,
+    "showOutput" : true, // verbose process output
+    "!timeout": 280, // kill the process after seconds
+    "!batchWait": 6, // wait a few seconds for another change before building 
+    "!interrupt": true, // kill the proccess when there is a new change 
+    "!mvnOpts": "-Xms64m -Xmx256m", // MAVEN_OPTS system environment passed to process otherwise inherited
+    "!mvnArgs": "-Dmaven.surefire.debug -DforkMode=never", // any valid argument to maven
+    "!mvnCmd": "mvnDebug.cmd", //override the mvn command - automatically detects mvn.cmd on Microsoft
     "locations": [
         "/home/wozza/.m2/repository",
         "/code/captcha",
@@ -31,10 +37,10 @@ config = {
         ]
     },
     "buildCommands": {
-        "::": "mvn -DskipTests -f %1$s clean install",
+        "::": "mvn -DskipTests clean install",
         "/code/captcha/.*": "mvn -DskipTests -f %1$s -N install",
         "mofokom:.*": [
-            "mvn -DskipTests -f %1$s install"
+            "mvn -DskipTests install"
         ]
     }
 }

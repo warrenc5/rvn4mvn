@@ -1260,7 +1260,8 @@ public class Rvn extends Thread {
 					}
 					path.forEach(nvv -> {
 						try {
-							if (!doBuild(nvv).get(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)) {
+							if (!doBuild(nvv).get(timeoutMap.getOrDefault(nvv, timeout).toSeconds(),
+									TimeUnit.SECONDS)) {
 								throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
 										+ ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
 							}
@@ -1313,6 +1314,7 @@ public class Rvn extends Thread {
 
 				String mvnCmd = mvnCmdMap.getOrDefault(nvv, Rvn.this.mvnCmd);
 				String mvnOpts = mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
+
 				command = command.replace("mvn ", mvnCmd + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ");
 
 				String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
@@ -1372,13 +1374,16 @@ public class Rvn extends Thread {
 					}
 
 					pb.environment().putAll(System.getenv());
-					pb.environment().put("maven.opts",mvnOpts);
+
+					if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
+						pb.environment().put("maven.opts", mvnOpts);
+					}
 
 					p = pb.start();
 
 					processMap.put(dir, p);
 
-					if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)){
+					if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)) {
 						stopProcess(p);
 					}
 
