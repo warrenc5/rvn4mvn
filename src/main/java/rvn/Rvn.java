@@ -1226,7 +1226,7 @@ public class Rvn extends Thread {
 			return newList;
 		});
 
-		logger.info(projectKey + "  " + commands.get(projectKey).toString());
+		logger.fine(projectKey + "  " + commands.get(projectKey).toString());
 	}
 
 	class BuildIt extends Thread {
