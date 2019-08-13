@@ -140,6 +140,7 @@ public class Rvn extends Thread {
 	private File tf = null;
 	private Boolean interrupt;
 	private String mvnOpts;
+	private String javaHome;
 	private String mvnArgs;
 	private Duration batchWait;
 	private Map<NVV, String> mvnCmdMap;
@@ -147,6 +148,7 @@ public class Rvn extends Thread {
 	private Map<NVV, Duration> timeoutMap;
 	private Map<NVV, Boolean> interruptMap;
 	private Map<NVV, String> mvnOptsMap;
+	private Map<NVV, String> javaHomeMap;
 	private Map<NVV, String> mvnArgsMap;
 
 	private Map<NVV, ScheduledFuture> futureMap = new HashMap<>();
@@ -218,8 +220,10 @@ public class Rvn extends Thread {
 		timeoutMap = new HashMap<>();
 		interruptMap = new HashMap<>();
 		mvnOptsMap = new HashMap<>();
+		javaHomeMap = new HashMap<>();
 		mvnArgsMap = new HashMap<>();
 		mvnOpts = "";
+		javaHome = "";
 		mvnArgs = "";
 
 		this.readHashes();
@@ -1175,7 +1179,7 @@ public class Rvn extends Thread {
 	}
 
 	private void stopProcess(Process p) {
-		p.descendants().forEach(ph -> ph.destroyForcibly());
+		//FIXME: java9  p.descendants().forEach(ph -> ph.destroyForcibly());
 		p.destroyForcibly();
 	}
 
@@ -1260,8 +1264,8 @@ public class Rvn extends Thread {
 					}
 					path.forEach(nvv -> {
 						try {
-							if (!doBuild(nvv).get(timeoutMap.getOrDefault(nvv, timeout).toSeconds(),
-									TimeUnit.SECONDS)) {
+							if (!doBuild(nvv).get(timeoutMap.getOrDefault(nvv, timeout).toMillis(),
+									TimeUnit.MILLISECONDS)) {
 								throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
 										+ ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
 							}
@@ -1314,6 +1318,7 @@ public class Rvn extends Thread {
 
 				String mvnCmd = mvnCmdMap.getOrDefault(nvv, Rvn.this.mvnCmd);
 				String mvnOpts = mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
+				String javaHome = javaHomeMap.getOrDefault(nvv, Rvn.this.javaHome);
 
 				command = command.replace("mvn ", mvnCmd + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ");
 
@@ -1378,12 +1383,21 @@ public class Rvn extends Thread {
 					if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
 						pb.environment().put("maven.opts", mvnOpts);
 					}
+					if(logger.isLoggable(Level.FINEST))
+						logger.finest(pb.environment().entrySet().stream().map(e->e.toString()).collect(Collectors.joining("\r\n",",","\r\n")));
+					if (javaHome != null && !javaHome.trim().isEmpty()) {
+						pb.environment().put("JAVA_HOME", javaHome);
+						String path = "Path";
+						pb.environment().put(path,new StringBuilder(javaHome).append(File.separatorChar).append("bin").append(File.pathSeparatorChar).append(pb.environment().getOrDefault(path,"")).toString()); //FIXME:  maybe microsoft specific
+					if(logger.isLoggable(Level.FINE))
+						logger.fine(pb.environment().entrySet().stream().filter(e->e.getKey().equals(path)).map(e->e.toString()).collect(Collectors.joining(",",",",",")));
+					}
 
 					p = pb.start();
 
 					processMap.put(dir, p);
 
-					if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toSeconds(), TimeUnit.SECONDS)) {
+					if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS)) {
 						stopProcess(p);
 					}
 
@@ -1636,7 +1650,7 @@ public class Rvn extends Thread {
 			logger.fine(key + " " + timeout);
 		}
 
-		if (result.hasMember(key = "mvnOpts")) {
+			if (result.hasMember(key = "mvnOpts")) {
 			String v = (String) result.get(key);
 			if (oNvv.isPresent()) {
 				mvnOptsMap.put(oNvv.get(), v.toString());
@@ -1644,6 +1658,16 @@ public class Rvn extends Thread {
 				mvnOpts = v.toString();
 			}
 			logger.fine(key + " " + mvnOpts);
+		}
+
+	if (result.hasMember(key = "javaHome")) {
+			String v = (String) result.get(key);
+			if (oNvv.isPresent()) {
+				javaHomeMap.put(oNvv.get(), v.toString());
+			} else {
+				javaHome = v.toString();
+			}
+			logger.fine(key + " " + javaHome);
 		}
 
 		if (result.hasMember(key = "mvnArgs")) {

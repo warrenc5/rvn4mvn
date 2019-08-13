@@ -1,5 +1,9 @@
 config = {
+	"timeout": 180,
+	"javaHome":  "C:\\work\\appz\\graalvm-ce-19.1.1",
+	"mvnArgs": "-Dmaven.surefire.debug -DforkMode=never -DtrimStackTrace=false",
     "buildCommands": [
+        "mvn -Pgraal", 
         "mvn -DskipTests install"
     ]
 }
