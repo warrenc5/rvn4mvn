@@ -39,7 +39,7 @@
             </activation>
             <properties>
                 <skipTests>true</skipTests>
-                <rvn.config>${settings.localRepository}</rvn.config>
+                <rvn.config>${settings.localRepository}/..</rvn.config>
             </properties>
             <build>
                 <plugins>
@@ -79,7 +79,7 @@
             </activation>
             <properties>
                 <skipTests>true</skipTests>
-                <rvn.config>${settings.localRepository}</rvn.config>
+                <rvn.config>${settings}</rvn.config>
             </properties>
             <build>
 
@@ -152,7 +152,7 @@
                         <!--
                         <version>19.2.0-dev-b01</version>
                         -->
-                        <version>19.1.1</version>
+                        <version>19.1.0</version>
                         <executions>
                             <execution>
                                 <goals>
@@ -162,7 +162,8 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:JNIConfigurationResources=jni.json</buildArgs>
+                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:ResourceConfigurationResources=resources.json -H:JNIConfigurationResources=jni.json</buildArgs>
+                            <imageName>rvn</imageName>
                         </configuration>
                     </plugin>
 <plugin>

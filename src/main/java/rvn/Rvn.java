@@ -42,7 +42,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +53,7 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -187,7 +187,7 @@ public class Rvn extends Thread {
     }
 
     public void init() throws Exception {
-        locations = new LinkedHashSet<>();
+        locations = new ConcurrentSkipListSet<>();
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
         projects = new HashMap<>();
@@ -279,7 +279,7 @@ public class Rvn extends Thread {
         try {
             if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
-                    stream.filter(child -> matchDirectories(child) || matchFiles(child)).forEach(this::registerPath);
+                    stream.filter(child -> matchSafe(child)).forEach(this::registerPath);
                 }
             } else if (path.toFile().toString().endsWith(".pom")) {
                 Optional<FileTime> lastest = watchRecursively(path.getParent().getParent()); // watch all versions
@@ -351,11 +351,12 @@ public class Rvn extends Thread {
         watchSet = new ArrayList(this.keyPath.values());
         Collections.sort(watchSet);
         logger.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
-        logger.info(String.format(ANSI_WHITE + "%1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET,
-                buildPaths.size(), projects.size(), keys.size(), duration.toString()));
 
         this.buildIndex();
         this.calculateToBuild();
+
+        logger.info(String.format(ANSI_WHITE + "watching %1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET,
+                buildPaths.size(), projects.size(), keys.size(), duration.toString()));
     }
 
     @Override
@@ -514,7 +515,10 @@ public class Rvn extends Thread {
                 lastNvv = nvv;
                 this.lastChangeFile = path;
                 processChange(nvv, path, false);
+            } else {
+                logger.info(String.format("change excluded by config: %1$s %2$s", path, nvv));
             }
+
         } catch (Exception x) {
             logger.warning(String.format("process: %1$s - %2$s", path, x.getMessage()));
             x.printStackTrace();
@@ -543,7 +547,7 @@ public class Rvn extends Thread {
             Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
 
             Path oldPath = buildArtifact.get(nvv);
-            if (oldPath != null && !oldPath.equals(path)) {
+            if (oldPath != null && !Files.isSameFile(path, oldPath)) {
                 Long otherTime = Files.getLastModifiedTime(oldPath).to(TimeUnit.SECONDS);
                 if (workingTime > otherTime) {
                     logger.warning(
@@ -727,32 +731,46 @@ public class Rvn extends Thread {
         }
     }
 
-    private boolean matchFiles(Path path) {
-        return matchFileIncludes.stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst()
-                .isPresent() // FIXME: absolutely
-                && !matchFileExcludes.stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst()
-                        .isPresent(); // FIXME: absolutely
+    private boolean matchFiles(Path path) throws IOException {
+        return Files.isSameFile(path, this.config)
+                || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent()
+                || matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !matchFileExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent(); // FIXME: absolutely
     }
 
     private boolean matchDirectories(Path path) {
-        return matchDirIncludes.stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst()
-                .isPresent() // FIXME: absolutely
-                && !matchDirExcludes.stream().filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst()
-                        .isPresent(); // FIXME: absolutely
+        return matchDirIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !matchDirExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent(); // FIXME: absolutely
     }
 
     private boolean matchNVV(NVV nvv) {
-        return matchArtifactIncludes.stream().filter(s -> nvv.toString().matches(s)).findFirst().isPresent() // FIXME:
+        return matchArtifactIncludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent() // FIXME:
                 // absolutely
-                && !matchArtifactExcludes.stream().filter(s -> nvv.toString().matches(s)).findFirst().isPresent(); // FIXME:
+                && !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent(); // FIXME:
         // absolutely
+    }
+
+    private boolean match(Path path, String s) {
+        boolean matches = path.toAbsolutePath().toString().matches(s);
+        if (matches) {
+            logger.fine("matches path " + s);
+        }
+        return matches;
+    }
+
+    private boolean match(NVV nvv, String s) {
+        boolean matches = nvv.toString().matches(s);
+        if (matches) {
+            logger.fine("matches artifact " + s);
+        }
+        return matches;
     }
 
     private void calculateToBuild() {
 
         this.lastBuild.entrySet().forEach(e -> {
             NVV nvv = e.getKey();
-            if (e.getValue().compareTo(this.lastUpdate.get(nvv)) < 0) {
+            if (e.getValue().compareTo(this.lastUpdate.getOrDefault(nvv, FileTime.from(Instant.MIN))) < 0) {
                 logger.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
                 if (!toBuild.contains(nvv)) {
                     toBuild.add(nvv);
@@ -1212,15 +1230,22 @@ public class Rvn extends Thread {
     }
 
     private void loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
-        String name = System.getProperty("rvn.config") + File.separatorChar + "rvn.json";
-        logger.info("defaulting to " + name);
+        String base = System.getProperty("rvn.config");
+        String name = base + File.separatorChar + "rvn.json";
+        //System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
+        if (base == null || base.trim().length() == 0) {
+            logger.info("system property ${rvn.config} not set defaulting to " + name);
+        } else {
+            logger.info("system property ${rvn.config} set " + base + ", resolving " + name);
+        }
         URL configURL = null;
         if (Files.exists(FileSystems.getDefault().getPath(name))) {
             configURL = FileSystems.getDefault().getPath(name).toUri().toURL();
         } else {
+            logger.info("loading from classpath " + name);
             configURL = Rvn.class.getResource(name);
         }
-        this.loadConfiguration(configURL);
+        this.config = this.loadConfiguration(configURL);
     }
 
     private void addCommand(String projectKey, List<String> newCommandList) {
@@ -1237,6 +1262,15 @@ public class Rvn extends Thread {
         });
 
         logger.fine(projectKey + "  " + commands.get(projectKey).toString());
+    }
+
+    private boolean matchSafe(Path child) {
+        try {
+            return matchDirectories(child) || matchFiles(child);
+        } catch (IOException ex) {
+            logger.log(Level.SEVERE, ex.getMessage(), ex);
+            return false;
+        }
     }
 
     class BuildIt extends Thread {
@@ -1367,8 +1401,13 @@ public class Rvn extends Thread {
                 }
 
                 command = String.format(command, dir);
-                ProcessBuilder pb = new ProcessBuilder().directory(dir.getParent().toFile())
-                        .command(command.split(" "));
+                String[] args = command.split(" ");
+                List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
+
+                ProcessBuilder pb = new ProcessBuilder()
+                        .directory(dir.getParent().toFile())
+                        .command(filtered.toArray(new String[filtered.size()]));
+
                 Instant then = Instant.now();
 
                 Process p = null;
@@ -1542,20 +1581,20 @@ public class Rvn extends Thread {
         return new String(md.digest());
     }
 
-    private void loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
-        this.loadConfiguration(configURL, null);
+    private Path loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
+        return this.loadConfiguration(configURL, null);
     }
 
-    private void loadConfiguration(URL configURL, NVV nvv) throws IOException, ScriptException, URISyntaxException {
-        config = null;
+    private Path loadConfiguration(URL configURL, NVV nvv) throws IOException, ScriptException, URISyntaxException {
+        Path config = null;
 
         logger.fine(String.format("trying configuration %1$s", configURL));
 
         if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
             config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.json");
             if (!Files.exists(config)) {
-                logger.fine(String.format("creating new configuration from " + ANSI_WHITE + "%1$s" + ANSI_RESET,
-                        configURL));
+                logger.info(String.format("%1$s doesn't exist, creating it from " + ANSI_WHITE + "%2$s" + ANSI_RESET,
+                        config, configURL));
                 try (Reader reader = new InputStreamReader(configURL.openStream());
                         Writer writer = new FileWriter(config.toFile());) {
                     while (reader.ready()) {
@@ -1565,7 +1604,7 @@ public class Rvn extends Thread {
                 }
                 logger.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
             } else {
-                logger.info(String.format("trying configuration %1$s", configURL));
+                logger.info(String.format("%1$s exists", config));
             }
 
         } else {
@@ -1583,7 +1622,7 @@ public class Rvn extends Thread {
             result.put("projectCoordinates", nvv);
         }
         buildConfiguration(result);
-
+        return config;
     }
 
     private void buildConfiguration(ScriptObjectMirror result) {
