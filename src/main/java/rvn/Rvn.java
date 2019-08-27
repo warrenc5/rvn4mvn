@@ -20,6 +20,7 @@ import java.net.URL;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
@@ -421,6 +422,8 @@ public class Rvn extends Thread {
                         } else if (kind == ENTRY_MODIFY) {
                             processPath(child);
                         }
+                    } catch (NoSuchFileException ex) {
+                        logger.log(Level.INFO, ex.getMessage());
                     } catch (Exception ex) {
                         logger.log(Level.SEVERE, ex.getMessage(), ex);
                     }
@@ -1637,6 +1640,15 @@ public class Rvn extends Thread {
 
     private void buildConfiguration(ScriptObjectMirror result) {
         Optional<NVV> oNvv = Optional.ofNullable((NVV) result.get("projectCoordinates"));
+        if (oNvv.isPresent()) {
+            this.mvnOptsMap.remove(oNvv.get());
+            this.mvnArgsMap.remove(oNvv.get());
+            this.timeoutMap.remove(oNvv.get());
+            this.mvnCmdMap.remove(oNvv.get());
+            this.javaHomeMap.remove(oNvv.get());
+            this.interruptMap.remove(oNvv.get());
+            this.batchWaitMap.remove(oNvv.get());
+        }
 
         String key = null;
         if (result.hasMember(key = "mvnCmd")) {
