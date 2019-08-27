@@ -1273,6 +1273,16 @@ public class Rvn extends Thread {
         }
     }
 
+    private String join(String o, String v) {
+        StringBuilder bob = new StringBuilder();
+        if (o != null) {
+            bob.append(o);
+            bob.append(" ");
+        }
+        bob.append(v);
+        return bob.toString();
+    }
+
     class BuildIt extends Thread {
 
         public BuildIt() {
@@ -1708,7 +1718,7 @@ public class Rvn extends Thread {
         if (result.hasMember(key = "mvnOpts")) {
             String v = (String) result.get(key);
             if (oNvv.isPresent()) {
-                mvnOptsMap.put(oNvv.get(), v.toString());
+                mvnOptsMap.compute(oNvv.get(), (k, o) -> join(o, v));
             } else {
                 mvnOpts = v.toString();
             }
@@ -1728,7 +1738,7 @@ public class Rvn extends Thread {
         if (result.hasMember(key = "mvnArgs")) {
             String v = (String) result.get(key);
             if (oNvv.isPresent()) {
-                mvnArgsMap.put(oNvv.get(), v.toString());
+                mvnArgsMap.compute(oNvv.get(), (k, o) -> join(o, v));
             } else {
                 mvnArgs = v.toString();
             }
