@@ -1054,7 +1054,7 @@ public class Rvn extends Thread {
         commandHandlers.add(
                 new CommandHandler("0-100", "100", "Builds the project(s) for the given project number.", (command) -> {
 
-                    Iterator<? extends Object> it = Arrays.stream(command.split(" ")).map(s -> {
+                    Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> {
                         try {
                             return Integer.valueOf(s);
                         } catch (Exception x) {
@@ -1066,30 +1066,40 @@ public class Rvn extends Thread {
                     Object o = null;
                     StringBuilder cmd = new StringBuilder();
 
+                    OUTER:
                     while (it.hasNext()) {
                         o = it.next();
 
                         if (o instanceof Integer) {
+                            if (i != null && cmd.length() == 0) {
+                                this.buildAllCommands(i);
+                            }
                             i = (Integer) o;
                             o = null;
                         } else if (o instanceof String) {
                             cmd.append(o.toString());
+                            INNER:
                             while (it.hasNext()) {
                                 o = it.next();
                                 if (o instanceof String) {
                                     cmd.append(' ').append(o.toString());
                                 } else if (o instanceof Integer) {
-                                    break;
+                                    i = (Integer) o;
+                                    break OUTER;
                                 }
                             }
+
+                            if (i != null && cmd.length() > 0) {
+                                this.buildAllCommands(i, cmd.toString());
+                                cmd = new StringBuilder();
+                                i = null;
+                            }
+
                         }
                     }
 
-                    if (cmd.length() == 0) {
+                    if (i != null && cmd.length() == 0) {
                         this.buildAllCommands(i);
-                    } else {
-                        this.buildAllCommands(i, cmd.toString());
-                        cmd = new StringBuilder();
                     }
 
                     return TRUE;
