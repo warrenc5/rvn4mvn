@@ -135,10 +135,11 @@ public class Rvn extends Thread {
     private Path config;
     private String mvnCmd;
     boolean ee = false;
-    boolean showOutput = true;
+    Boolean showOutput = true;
 
     private File tf = null;
     private Boolean interrupt;
+    private Boolean reuseOutput;
     private String mvnOpts;
     private String javaHome;
     private String mvnArgs;
@@ -150,6 +151,8 @@ public class Rvn extends Thread {
     private Map<NVV, String> mvnOptsMap;
     private Map<NVV, String> javaHomeMap;
     private Map<NVV, String> mvnArgsMap;
+    private Map<NVV, Boolean> reuseOutputMap;
+    private Map<NVV, Boolean> showOutputMap;
 
     private Map<NVV, ScheduledFuture> futureMap = new HashMap<>();
 
@@ -159,7 +162,7 @@ public class Rvn extends Thread {
         rvn.locations.addAll(Arrays.asList(args));
         rvn.start();
         rvn.processStdIn();
-        System.out.println(String.format("exited"));
+        System.out.println(String.format("************** Exited ************************"));
     }
 
     private Duration timeout = Duration.ofSeconds(60);
@@ -224,6 +227,9 @@ public class Rvn extends Thread {
         mvnOptsMap = new HashMap<>();
         javaHomeMap = new HashMap<>();
         mvnArgsMap = new HashMap<>();
+        reuseOutputMap = new HashMap<>();
+        showOutputMap = new HashMap<>();
+        reuseOutput = FALSE;
         mvnOpts = "";
         javaHome = "";
         mvnArgs = "";
@@ -384,52 +390,7 @@ public class Rvn extends Thread {
 
             try {
                 for (WatchEvent<?> event : key.pollEvents()) {
-                    try {
-                        WatchEvent.Kind<?> kind = event.kind();
-
-                        if (kind == OVERFLOW) {
-                            continue;
-                        }
-
-                        WatchEvent<Path> ev = (WatchEvent<Path>) event;
-                        Path filename = ev.context();
-
-                        if (!keyPath.containsKey(key)) {
-                            continue;
-                        }
-                        Path child = keyPath.get(key).resolve(filename);
-
-                        if (child.equals(config)) {
-                            try {
-                                logger.info("config changed " + filename);
-                                this.reloadConfiguration();
-                            } catch (Throwable ex) {
-                                logger.log(Level.SEVERE, ex.getMessage(), ex);
-                            }
-                            continue;
-                        }
-
-                        logger.fine(String.format("kind %1$s %2$s %3$d", ev.kind(), child, key.hashCode()));
-
-                        if (kind == ENTRY_DELETE) {
-                            Optional<WatchKey> cancelKey = keyPath.entrySet().stream()
-                                    .filter(e -> child.equals(e.getValue())).map(e -> e.getKey()).findFirst();
-                            if (cancelKey.isPresent()) {
-                                cancelKey.get().cancel();
-                            }
-                            // TODO remove from buildArtifacts
-                            updateIndex();
-                        } else if (kind == ENTRY_CREATE) {
-                            this.registerPath(child);
-                            updateIndex();
-                        } else if (kind == ENTRY_MODIFY) {
-                            processPath(child);
-                        }
-                    } catch (NoSuchFileException ex) {
-                        logger.log(Level.INFO, ex.getMessage());
-                    } catch (Exception ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    }
+                    processEvent(event, key);
                 }
 
             } catch (Throwable ex) {
@@ -443,6 +404,7 @@ public class Rvn extends Thread {
         }
 
         logger.info(String.format("outrun"));
+        Thread.dumpStack();
     }
 
     public Optional<String> getExtensionByStringHandling(String filename) {
@@ -1340,6 +1302,55 @@ public class Rvn extends Thread {
         }
     }
 
+    private void processEvent(WatchEvent<?> event, WatchKey key) {
+        try {
+            WatchEvent.Kind<?> kind = event.kind();
+
+            if (kind == OVERFLOW) {
+                return;
+            }
+
+            WatchEvent<Path> ev = (WatchEvent<Path>) event;
+            Path filename = ev.context();
+
+            if (!keyPath.containsKey(key)) {
+                return;
+            }
+            Path child = keyPath.get(key).resolve(filename);
+
+            if (child.equals(config)) {
+                try {
+                    logger.info("config changed " + filename);
+                    this.reloadConfiguration();
+                } catch (Throwable ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                }
+                return;
+            }
+
+            logger.fine(String.format("kind %1$s %2$s %3$d", ev.kind(), child, key.hashCode()));
+
+            if (kind == ENTRY_DELETE) {
+                Optional<WatchKey> cancelKey = keyPath.entrySet().stream()
+                        .filter(e -> child.equals(e.getValue())).map(e -> e.getKey()).findFirst();
+                if (cancelKey.isPresent()) {
+                    cancelKey.get().cancel();
+                }
+                // TODO remove from buildArtifacts
+                updateIndex();
+            } else if (kind == ENTRY_CREATE) {
+                this.registerPath(child);
+                updateIndex();
+            } else if (kind == ENTRY_MODIFY) {
+                processPath(child);
+            }
+        } catch (NoSuchFileException ex) {
+            logger.log(Level.INFO, ex.getMessage());
+        } catch (Exception ex) {
+            logger.log(Level.SEVERE, ex.getMessage(), ex);
+        }
+    }
+
     class BuildIt extends Thread {
 
         public BuildIt() {
@@ -1376,9 +1387,10 @@ public class Rvn extends Thread {
 
             }
             logger.info("builder exited - no more builds - restart");
+            Thread.dumpStack();
         }
 
-        public CompletableFuture<Boolean> doBuild(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
+        public synchronized CompletableFuture<Boolean> doBuild(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
             CompletableFuture<Boolean> result = new CompletableFuture<>();
 
             Path dir = buildArtifact.get(nvv);
@@ -1465,14 +1477,23 @@ public class Rvn extends Thread {
                 Process p = null;
                 try {
 
-                    if (Rvn.this.showOutput) {
+                    File nf = null;
+                    if (Rvn.this.showOutputMap.getOrDefault(nvv, Rvn.this.showOutput)) {
                         tf = null;
                         pb.inheritIO();
                     } else {
-                        tf = File.createTempFile("rvn-" + nvv.toString().replace(':', '-'), ".out");
+                        tf = File.createTempFile("rvn-", "-" + nvv.toString().replace(':', '-') + ".out");
+
+                        if (reuseOutputMap.getOrDefault(nvv, reuseOutput)) {
+                            nf = new File(tf.getParentFile(), "rvn-" + nvv.toString().replace(':', '-') + ".out");
+                            if (!tf.renameTo(nf)) {
+                                logger.warning("rename file failed " + nf.getAbsolutePath());
+                            }
+                            tf = nf;
+                        }
                         pb.redirectOutput(tf);
                         pb.redirectError(tf);
-                        logger.fine("redirecting to " + ANSI_WHITE + tf + ANSI_RESET);
+                        logger.info("redirecting to " + ANSI_WHITE + tf + ANSI_RESET);
                     }
 
                     pb.environment().putAll(System.getenv());
@@ -1574,6 +1595,7 @@ public class Rvn extends Thread {
                     logger.info(new String(c, 0, l));
                 }
             }
+            logger.info(ANSI_WHITE + tf + ANSI_RESET);
         }
     }
 
@@ -1713,6 +1735,7 @@ public class Rvn extends Thread {
             this.javaHomeMap.remove(oNvv.get());
             this.interruptMap.remove(oNvv.get());
             this.batchWaitMap.remove(oNvv.get());
+            this.reuseOutputMap.remove(oNvv.get());
         }
 
         String key = null;
@@ -1820,6 +1843,26 @@ public class Rvn extends Thread {
                 mvnArgs = v.toString();
             }
             logger.fine(key + " " + mvnArgs);
+        }
+
+        if (result.hasMember(key = "showOutput")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+                showOutputMap.put(oNvv.get(), v);
+            } else {
+                showOutput = v;
+            }
+            logger.fine(key + " " + showOutput);
+        }
+
+        if (result.hasMember(key = "reuseOutput")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+                reuseOutputMap.put(oNvv.get(), v);
+            } else {
+                reuseOutput = v;
+            }
+            logger.fine(key + " " + reuseOutput);
         }
 
         if (result.hasMember(key = "batchWait")) {

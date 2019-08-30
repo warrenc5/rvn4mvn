@@ -1,5 +1,6 @@
 config = {
     "showOutput" : true, // verbose process output
+    "reuseOutput" : false, //when hiding output write to same file, instead of random file
     "!timeout": 280, // kill the process after seconds
     "!batchWait": 6, // wait a few seconds for another change before building 
     "!interrupt": true, // kill the proccess when there is a new change 

@@ -3,6 +3,7 @@ config = {
 	"javaHome":  "/usr/local/java/graalvm",
 	"mvnArgs": "-Dmaven.surefire.debug -DforkMode=never -DtrimStackTrace=false",
     "buildCommands": [
+        "mvn -Dmaven.test.skip=true install",
         "mvn -Pgraal -Dmaven.test.skip=true" 
     ]
 }
