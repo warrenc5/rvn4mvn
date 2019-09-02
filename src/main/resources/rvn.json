@@ -7,6 +7,7 @@ config = {
     "!mvnOpts": "-Xms64m -Xmx256m", // MAVEN_OPTS system environment passed to process otherwise inherited
     "!mvnArgs": "-Dmaven.surefire.debug -DforkMode=never", // any valid argument to maven
     "!mvnCmd": "mvnDebug.cmd", //override the mvn command - automatically detects mvn.cmd on Microsoft
+    "daemon": true, //run maven in the same java process 
     "locations": [
         "/home/wozza/.m2/repository",
         "/code/captcha",

@@ -82,6 +82,7 @@ import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import jdk.nashorn.api.scripting.ScriptObjectMirror;
+import org.codehaus.plexus.classworlds.launcher.Launcher;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -140,6 +141,7 @@ public class Rvn extends Thread {
     private File tf = null;
     private Boolean interrupt;
     private Boolean reuseOutput;
+    private Boolean daemon = false;
     private String mvnOpts;
     private String javaHome;
     private String mvnArgs;
@@ -153,6 +155,7 @@ public class Rvn extends Thread {
     private Map<NVV, String> mvnArgsMap;
     private Map<NVV, Boolean> reuseOutputMap;
     private Map<NVV, Boolean> showOutputMap;
+    private Map<NVV, Boolean> daemonMap;
 
     private Map<NVV, ScheduledFuture> futureMap = new HashMap<>();
 
@@ -171,6 +174,7 @@ public class Rvn extends Thread {
     private Instant then = null;
     private Path lastChangeFile;
     private final BuildIt buildIt;
+    private Path hashConfig;
 
     public Rvn() throws Exception {
         this.setName("Rvn_Main");
@@ -194,6 +198,8 @@ public class Rvn extends Thread {
     }
 
     public void init() throws Exception {
+
+        hashConfig = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
         locations = new ConcurrentSkipListSet<>();
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
@@ -229,6 +235,7 @@ public class Rvn extends Thread {
         mvnArgsMap = new HashMap<>();
         reuseOutputMap = new HashMap<>();
         showOutputMap = new HashMap<>();
+        daemonMap = new HashMap<>();
         reuseOutput = FALSE;
         mvnOpts = "";
         javaHome = "";
@@ -443,7 +450,7 @@ public class Rvn extends Thread {
         boolean skipHash = !path.endsWith("pom.xml");
 
         if (!skipHash && hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
-            logger.info("no change detected" + path);
+            logger.info("no hash change detected " + path);
             return;
         }
 
@@ -1172,10 +1179,8 @@ public class Rvn extends Thread {
 
     private void writeHashes() throws IOException {
 
-        Path config = Paths
-                .get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
         try {
-            FileOutputStream fos = new FileOutputStream(config.toFile());
+            FileOutputStream fos = new FileOutputStream(hashConfig.toFile());
             ObjectOutputStream oos = new ObjectOutputStream(fos);
             oos.writeObject(this.hashes);
             fos.flush();
@@ -1186,11 +1191,9 @@ public class Rvn extends Thread {
 
     private void readHashes() throws IOException {
 
-        Path config = Paths
-                .get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
-        if (Files.exists(config)) {
+        if (Files.exists(hashConfig)) {
             try {
-                FileInputStream fis = new FileInputStream(config.toFile());
+                FileInputStream fis = new FileInputStream(hashConfig.toFile());
                 ObjectInputStream ois = new ObjectInputStream(fis);
                 this.hashes = (Map<String, String>) ois.readObject();
             } catch (IOException x) {
@@ -1198,6 +1201,8 @@ public class Rvn extends Thread {
             } catch (ClassNotFoundException x) {
                 logger.warning(x.getMessage());
             }
+        } else {
+            logger.info("no hashes found " + hashConfig.toAbsolutePath());
         }
     }
 
@@ -1424,7 +1429,16 @@ public class Rvn extends Thread {
                 String mvnOpts = mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
                 String javaHome = javaHomeMap.getOrDefault(nvv, Rvn.this.javaHome);
 
-                command = command.replace("mvn ", mvnCmd + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ");
+                String mvn = "mvn ";
+                if (command.indexOf(mvn) >= 0 && command.indexOf("-f") == -1) {
+                    command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -f %1$s ")
+                            .toString();
+                }
+
+                if (agProjects.contains(nvv)) {
+                    command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -N ")
+                            .toString();
+                }
 
                 String cmd = String.format(command, ANSI_PURPLE + dir + ANSI_WHITE) + ANSI_RESET;
 
@@ -1443,7 +1457,7 @@ public class Rvn extends Thread {
                 if (lastChangeFile != null) {
                     Matcher matcher = testRe.matcher(lastChangeFile.toString());
 
-                    if (command.indexOf(mvnCmd) >= 0 && command.endsWith("-Dtest=")) {
+                    if (command.indexOf(mvn) >= 0 && command.endsWith("-Dtest=")) {
                         if (lastChangeFile != null && matcher != null && matcher.matches()) {
 
                             command = String.format(command + "%1$s", matcher.group(1).replaceAll(File.separator, "."));
@@ -1454,23 +1468,37 @@ public class Rvn extends Thread {
                     }
                 }
 
-                if (command.indexOf(mvnCmd) >= 0 && command.indexOf("-f") == -1) {
-                    command = new StringBuilder(command).insert(command.indexOf(mvnCmd) + mvnCmd.length(), " -f %1$s")
-                            .toString();
-                }
-
-                if (agProjects.contains(nvv)) {
-                    command = new StringBuilder(command).insert(command.indexOf(mvnCmd) + mvnCmd.length(), " -N")
-                            .toString();
+                boolean daemon = daemonMap.getOrDefault(nvv, Rvn.this.daemon);
+                if (daemon) {
+                    command = command.replace("mvn ", "-Drvn.mvn");
+                } else {
+                    command = command.replace("mvn ", mvnCmd + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ");
                 }
 
                 command = String.format(command, dir);
                 String[] args = command.split(" ");
-                List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
+                final List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
+                final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
+                if (daemon) {
+                    logger.info("running in process");
+
+                    return result.completeAsync(()
+                            -> {
+                        try {
+                            Launcher.mainWithExitCode(filteredArgs);
+                        } catch (Exception ex) {
+                            return FALSE;
+                        }
+                        return TRUE;
+                    });
+
+                }
+
+                logger.info("spawning new process");
                 ProcessBuilder pb = new ProcessBuilder()
                         .directory(dir.getParent().toFile())
-                        .command(filtered.toArray(new String[filtered.size()]));
+                        .command(filteredArgs);
 
                 Instant then = Instant.now();
 
@@ -1521,7 +1549,10 @@ public class Rvn extends Thread {
 
                     processMap.put(dir, p);
 
+                    boolean timedOut = false;
                     if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS)) {
+
+                        timedOut = true;
                         stopProcess(p);
                     }
 
@@ -1529,9 +1560,9 @@ public class Rvn extends Thread {
 
                     logger.info(String.format(
                             ANSI_CYAN + "%1$s " + ANSI_RESET + ((p.exitValue() == 0) ? ANSI_GREEN : ANSI_RED)
-                            + (p.exitValue() == 0 ? "PASSED" : "FAILED") + " (%2$s)" + ANSI_RESET
+                            + (timedOut ? "TIMEDOUT" : (p.exitValue() == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
                             + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET,
-                            nvv, +p.exitValue(), command, Duration.between(then, Instant.now())));
+                            nvv, p.exitValue(), command, Duration.between(then, Instant.now())));
 
                 } catch (Exception ex) {
                     logger.log(Level.SEVERE, "wasted process" + ex.getMessage(), ex);
@@ -1812,7 +1843,7 @@ public class Rvn extends Thread {
             } else {
                 timeout = Duration.ofSeconds(v);
             }
-            logger.fine(key + " " + timeout);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "mvnOpts")) {
@@ -1822,7 +1853,7 @@ public class Rvn extends Thread {
             } else {
                 mvnOpts = v.toString();
             }
-            logger.fine(key + " " + mvnOpts);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "javaHome")) {
@@ -1832,7 +1863,7 @@ public class Rvn extends Thread {
             } else {
                 javaHome = v.toString();
             }
-            logger.fine(key + " " + javaHome);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "mvnArgs")) {
@@ -1842,7 +1873,17 @@ public class Rvn extends Thread {
             } else {
                 mvnArgs = v.toString();
             }
-            logger.fine(key + " " + mvnArgs);
+            logger.fine(key + " " + v);
+        }
+
+        if (result.hasMember(key = "daemon")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+                daemonMap.put(oNvv.get(), v);
+            } else {
+                daemon = v;
+            }
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "showOutput")) {
@@ -1852,7 +1893,7 @@ public class Rvn extends Thread {
             } else {
                 showOutput = v;
             }
-            logger.fine(key + " " + showOutput);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "reuseOutput")) {
@@ -1862,7 +1903,7 @@ public class Rvn extends Thread {
             } else {
                 reuseOutput = v;
             }
-            logger.fine(key + " " + reuseOutput);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "batchWait")) {
@@ -1872,7 +1913,7 @@ public class Rvn extends Thread {
             } else {
                 batchWait = Duration.ofSeconds(v);
             }
-            logger.fine(key + " " + batchWait);
+            logger.fine(key + " " + v);
         }
 
         if (result.hasMember(key = "interrupt")) {
@@ -1883,7 +1924,7 @@ public class Rvn extends Thread {
             } else {
                 interrupt = v;
             }
-            logger.fine(key + " " + interrupt);
+            logger.fine(key + " " + v);
         }
 
         if (oNvv != null) {
