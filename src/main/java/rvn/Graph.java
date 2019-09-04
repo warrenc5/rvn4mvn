@@ -57,7 +57,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                         return q.stream();
                     });
         }).distinct().forEach(e -> oq.add(e));
-        logger.info("q->" + q.toString() + " " + q.size());
+        logger.fine("q->" + q.toString() + " " + q.size());
         this.clear();
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
@@ -92,8 +92,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-                    logger.info(n1 + " " + n2 + " " + e.toString());
-                    logger.info(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+            logger.fine(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
 
