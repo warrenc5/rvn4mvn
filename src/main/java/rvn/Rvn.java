@@ -295,7 +295,7 @@ public class Rvn extends Thread {
                 LocalTime.now(), Duration.between(then, Instant.now()).toString()));
 
         Optional<Boolean> handled = commandHandlers.stream().map(c -> c.apply(command))
-                .filter(b -> Boolean.TRUE.equals(b)).findAny();
+                .filter(b -> Boolean.TRUE.equals(b)).findFirst();
         if (handled.isPresent()) {
             if (handled.get().booleanValue()) {
                 logger.info("" + (char) (new Random().nextInt(5) + 1));
@@ -472,7 +472,7 @@ public class Rvn extends Thread {
             return;
         }
 
-        boolean skipHash = !path.endsWith("pom.xml");
+        boolean skipHash = !path.endsWith("pom.xml") || isConfigFile(path);
 
         if (!skipHash && hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
             logger.info("no hash change detected " + path);
@@ -675,56 +675,45 @@ public class Rvn extends Thread {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
         }
 
-        Duration batchWait = immediate ? Duration.ZERO : batchWaitMap.getOrDefault(nvv, this.batchWait);
-
-        synchronized (futureMap) {
-            interruptProcess(nvv);
-            futureMap.computeIfPresent(nvv, (nvv1, future) -> {
-                future.cancel(interrupt);
-                return future;
-            });
-
-            futureMap.computeIfAbsent(nvv, (nvv1) -> {
-                logger.fine(
-                        String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
-                Future<?> future = executor.schedule(() -> {
-                    logger.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(),
-                            batchWait.toMillis()));
-                    try {
-                        qBuild(nvv, nvv);
-                    } catch (Exception e) {
-                        logger.severe("error " + e);
-                    } finally {
-                        futureMap.remove(nvv);
-                    }
-                    return null;
-                }, batchWait.toMillis(), TimeUnit.MILLISECONDS);
-                logger.info("waiting for future " + nvv.toString());
-                return future;
-            });
-        }
+        this.scheduleFuture(nvv, immediate);
     }
 
-    private boolean interruptProcess(NVV nvv) {
-        //TODO should cancel future here?
-        Boolean interrupt = interruptMap.getOrDefault(nvv, this.interrupt);
-        if (interrupt) {
+    private synchronized void scheduleFuture(NVV nvv, boolean immediate) {
+        Duration batchWait = immediate ? Duration.ZERO : batchWaitMap.getOrDefault(nvv, this.batchWait);
 
-            Path dir = buildArtifact.get(nvv);
-
-            Process value = this.processMap.computeIfPresent(dir, (key, p) -> {
-                logger.info(String.format("destroying process %1$s", nvv));
-                synchronized (processMap) {
-                    stopBuild(nvv);
+        futureMap.computeIfPresent(nvv, (nvv1, future) -> {
+            Boolean interrupt = interruptMap.getOrDefault(nvv1, this.interrupt);
+            if (future.isDone()) {
+                return null;
+            } else if (interrupt) {
+                synchronized (futureMap) {
+                    Rvn.this.stopBuild(nvv);
                 }
                 return null;
-            });
-
-            if (value != null) {
-                return true;
+            } else {
+                logger.fine("already queued/running " + nvv1.toString());
+                return future;
             }
-        }
-        return false;
+        });
+
+        futureMap.computeIfAbsent(nvv, (nvv1) -> {
+            logger.fine(
+                    String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
+            Future<?> future = executor.schedule(() -> {
+                logger.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(),
+                        batchWait.toMillis()));
+                try {
+                    Rvn.this.qBuild(nvv, nvv);
+                } catch (Exception e) {
+                    logger.severe("error " + e);
+                } finally {
+                    futureMap.remove(nvv);
+                }
+                return null;
+            }, batchWait.toMillis(), TimeUnit.MILLISECONDS);
+            logger.info("waiting for future " + nvv.toString());
+            return future;
+        });
     }
 
     private void buildDeps(NVV nvv) {
@@ -739,9 +728,7 @@ public class Rvn extends Thread {
     }
 
     private boolean matchFiles(Path path) throws IOException {
-        return Files.isSameFile(path, this.config)
-                || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent()
-                || matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
+        return this.isConfigFile(path) || matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
                 && !matchFileExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent(); // FIXME: absolutely
     }
 
@@ -1050,60 +1037,7 @@ public class Rvn extends Thread {
                     }
                     return FALSE;
                 }));
-        commandHandlers.add(
-                new CommandHandler("0-100", "100", "Builds the project(s) for the given project number.", (command) -> {
 
-                    logger.info("swallowing build");
-                    Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> {
-                        try {
-                            return Integer.valueOf(s);
-                        } catch (Exception x) {
-                        }
-                        return s;
-                    }).iterator();
-
-                    Integer i = null;
-                    Object o = null;
-                    StringBuilder cmd = new StringBuilder();
-
-                    OUTER:
-                    while (it.hasNext()) {
-                        o = it.next();
-
-                        if (o instanceof Integer) {
-                            if (i != null && cmd.length() == 0) {
-                                this.buildAllCommands(i);
-                            }
-                            i = (Integer) o;
-                            o = null;
-                        } else if (o instanceof String) {
-                            cmd.append(o.toString());
-                            INNER:
-                            while (it.hasNext()) {
-                                o = it.next();
-                                if (o instanceof String) {
-                                    cmd.append(' ').append(o.toString());
-                                } else if (o instanceof Integer) {
-                                    i = (Integer) o;
-                                    break OUTER;
-                                }
-                            }
-
-                            if (i != null && cmd.length() > 0) {
-                                this.buildAllCommands(i, cmd.toString());
-                                cmd = new StringBuilder();
-                                i = null;
-                            }
-
-                        }
-                    }
-
-                    if (i != null && cmd.length() == 0) {
-                        this.buildAllCommands(i);
-                    }
-
-                    return TRUE;
-                }));
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
                     try {
@@ -1115,8 +1049,8 @@ public class Rvn extends Thread {
                             } catch (Exception ex) {
                                 logger.warning(ex.getMessage());
                             }
+                            return TRUE;
                         }
-                        return TRUE;
                     } catch (Exception x) {
                     }
                     return FALSE;
@@ -1164,7 +1098,7 @@ public class Rvn extends Thread {
                 }));
 
         commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
-            if (command.equals("/")) {
+            if (command.trim().equals("/")) {
                 failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
                     Rvn.this.buildDeps(e.getKey());
                 });
@@ -1174,7 +1108,7 @@ public class Rvn extends Thread {
         }));
 
         commandHandlers.add(new CommandHandler("q", "", "Proceed with all builds waiting.", (command) -> {
-            if (command.equalsIgnoreCase("q")) {
+            if (command.trim().equalsIgnoreCase("q")) {
                 logger.info("blitzkreik");
 
                 stopAllBuilds();
@@ -1203,6 +1137,63 @@ public class Rvn extends Thread {
             }
             return FALSE;
         }));
+        commandHandlers.add(
+                new CommandHandler("0-100", "100", "Builds the project(s) for the given project number.", (command) -> {
+
+                    Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> s.trim()).map(s -> {
+                        try {
+                            return Integer.valueOf(s);
+                        } catch (Exception x) {
+                        }
+                        return s;
+                    }).iterator();
+
+                    Integer i = null;
+                    Object o = null;
+                    StringBuilder cmd = new StringBuilder();
+
+                    OUTER:
+                    while (it.hasNext()) {
+                        o = it.next();
+
+                        if (o instanceof Integer) {
+                            if (i != null && cmd.length() == 0) {
+                                this.buildAllCommands(i);
+                            }
+                            i = (Integer) o;
+                            o = null;
+                        } else if (o instanceof String) {
+                            if (i == null) {
+                                return FALSE;
+                            }
+                            cmd.append(o.toString());
+                            INNER:
+                            while (it.hasNext()) {
+                                o = it.next();
+                                if (o instanceof String) {
+                                    cmd.append(' ').append(o.toString());
+                                } else if (o instanceof Integer) {
+                                    i = (Integer) o;
+                                    break OUTER;
+                                }
+                            }
+
+                            if (i != null && cmd.length() > 0) {
+                                this.buildAllCommands(i, cmd.toString());
+                                cmd = new StringBuilder();
+                                i = null;
+                            }
+
+                        }
+                    }
+
+                    if (i != null && cmd.length() == 0) {
+                        this.buildAllCommands(i);
+                    }
+
+                    logger.info("swallowing build");
+                    return TRUE;
+                }));
     }
 
     private void writeHashes() throws IOException {
@@ -1429,6 +1420,11 @@ public class Rvn extends Thread {
         executor = new ScheduledThreadPoolExecutor(1);
     }
 
+    private boolean isConfigFile(Path path) throws IOException {
+        return Files.isSameFile(path, this.config)
+                || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+    }
+
     class BuildIt extends Thread {
 
         public BuildIt() {
@@ -1476,19 +1472,14 @@ public class Rvn extends Thread {
             Path dir = buildArtifact.get(nvv);
             if (dir == null) {
                 logger.info(String.format("no pom " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
-                result.complete(Boolean.TRUE);
+                (result = new CompletableFuture<>()).complete(FALSE);
                 return result;
             }
 
             //lock.lock();
             if (processMap.containsKey(dir)) {
-                logger.info(String.format("already building " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
-
-                if (interruptProcess(nvv)) {
-                    result.complete(Boolean.TRUE);
-                    return result;
-                }
-                // processMap.get(path).destroyForcibly(); }
+                logger.warning(String.format("already building " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
+                (result = new CompletableFuture<>()).complete(FALSE);
             }
 
             List<String> commandList = commandLocator.apply(nvv, dir);
@@ -1607,7 +1598,7 @@ public class Rvn extends Thread {
                         //result.completeExceptionally(ex);
                         return FALSE;
                     } finally {
-                        logger.info("finally");
+                        logger.info("finally " + nvv.toString());
                         System.setOut(out);
                         System.setErr(err);
                     }
@@ -1675,6 +1666,7 @@ public class Rvn extends Thread {
                         logger.log(Level.SEVERE, "wasted process" + ex.getMessage(), ex);
                         result.completeExceptionally(ex);
                     } finally {
+                        logger.info("finally " + nvv.toString());
                         processMap.remove(dir);
                         /**
                          * try { lock.unlock(); } catch
@@ -1693,6 +1685,7 @@ public class Rvn extends Thread {
 
                         Rvn.this.then = Instant.now();
                     }
+                    return FALSE;
                 }, executor);
             }
         }
@@ -2119,7 +2112,11 @@ public class Rvn extends Thread {
 
         @Override
         public Boolean apply(String t) {
-            return this.fun.apply(t);
+            boolean applied = this.fun.apply(t);
+            if (applied) {
+                logger.info(verb);
+            }
+            return applied;
         }
 
     }
