@@ -133,6 +133,7 @@ public class Rvn extends Thread {
     private List<String> matchArtifactIncludes;
     private List<String> matchArtifactExcludes;
     private List<String> configFileNames;
+    private List<String> pomFileNames;
     private List<CommandHandler> commandHandlers;
 
     private Logger logger = Logger.getLogger(Rvn.class.getName());
@@ -244,6 +245,7 @@ public class Rvn extends Thread {
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
         configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
+        pomFileNames = new ArrayList<>(Arrays.asList(new String[]{"pom.xml", "pom.yml", ".*.pom$"}));
         matchFileIncludes = new ArrayList<>(configFileNames);
         matchFileExcludes = new ArrayList<>();
         matchDirIncludes = new ArrayList<>();
@@ -699,11 +701,9 @@ public class Rvn extends Thread {
         });
 
         futureMap.computeIfAbsent(nvv, (nvv1) -> {
-            logger.fine(
-                    String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
+            logger.fine(String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
             Future<?> future = executor.schedule(() -> {
-                logger.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(),
-                        batchWait.toMillis()));
+                logger.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
                 try {
                     Rvn.this.qBuild(nvv, nvv);
                 } catch (Exception e) {
@@ -787,7 +787,7 @@ public class Rvn extends Thread {
 
         Path dir = buildArtifact.get(nvv);
 
-        if (!dir.toString().endsWith("pom.xml")) {
+        if (!isPom(dir)) {
             return;
         } else {
             try {
@@ -1813,8 +1813,7 @@ public class Rvn extends Thread {
     }
 
     private boolean isPom(Path path) {
-        return Arrays.asList(new String[]{".*\\/pom.xml$", ".*.pom$"}).stream()
-                .filter(s -> path.toAbsolutePath().toString().matches(s)).findFirst().isPresent(); // FIXME: absolutely
+        return this.pomFileNames.stream().filter(s -> path.toAbsolutePath().toString().matches(s) || path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private NVV findPom(Path path) throws Exception {
@@ -1949,7 +1948,7 @@ public class Rvn extends Thread {
             }
         }
 
-        logger.info(key + " " + mvnCmd + " because os.name=" + System.getProperty("os.name")
+        logger.fine(key + " " + mvnCmd + " because os.name=" + System.getProperty("os.name")
                 + " override with mvnCmd: 'mvn' in config file");
 
         if (result.hasMember(key = "showOutput")) {
