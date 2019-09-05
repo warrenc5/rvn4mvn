@@ -120,7 +120,7 @@ public class Rvn extends Thread {
     private Map<NVV, FileTime> lastUpdate;
     private Map<NVV, Set<NVV>> projects;
     private Map<NVV, NVV> parent;
-    private Map<NVV, File> failMap;
+    private Map<NVV, Path> failMap;
     private Map<Path, Process> processMap;
 
     private Map<String, List<String>> commands;
@@ -147,7 +147,7 @@ public class Rvn extends Thread {
     boolean ee = false;
     Boolean showOutput = true;
 
-    private File tf = null;
+    private Path lastFile = null;
     private Boolean interrupt;
     private Boolean reuseOutput;
     private Boolean daemon = false;
@@ -305,14 +305,6 @@ public class Rvn extends Thread {
                 logger.info("" + (char) (new Random().nextInt(5) + 1));
             }
         }
-
-        /*
-		 * //jdk.nashorn.api.scripting.ScriptObjectMirror result =
-		 * (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine().eval("config=" +
-		 * command); //buildConfiguration(result); } catch (ScriptException ex) {
-		 * logger.warning(String.format("%1$s", ex.getMessage())); } catch (Exception
-		 * ex) { logger.severe("command failed" + ex.getMessage()); }
-         */
     }
 
     public void registerPath(String uri) {
@@ -897,7 +889,7 @@ public class Rvn extends Thread {
         commandHandlers.add(new CommandHandler("|", "|", "Show the last failed output.", (command) -> {
             if (command.equals("|")) {
                 try {
-                    writeFileToStdout(Rvn.this.tf);
+                    writeFileToStdout(Rvn.this.lastFile);
                 } catch (IOException ex) {
                     logger.info(ex.getMessage());
                 }
@@ -950,7 +942,7 @@ public class Rvn extends Thread {
             if (command.matches(">[0-9]+")) {
                 Integer i = Integer.valueOf(command.substring(1));
                 NVV nvv = buildIndex.get(i);
-                File fail = failMap.get(nvv);
+                Path fail = failMap.get(nvv);
                 try {
                     writeFileToStdout(fail);
                 } catch (IOException ex) {
@@ -1074,7 +1066,7 @@ public class Rvn extends Thread {
         commandHandlers.add(new CommandHandler(">>", ">>", "Dump the first entry in the fail map.", (command) -> {
             if (command.equals(">>")) {
                 failMap.entrySet().stream().findFirst().ifPresent(e -> {
-                    if (e.getValue().exists()) {
+                    if (Files.exists(e.getValue())) {
                         try {
                             Rvn.this.writeFileToStdout(e.getValue());
                         } catch (Exception ex) {
@@ -1579,47 +1571,28 @@ public class Rvn extends Thread {
             final List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
             final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
-            if (daemon) {
+            return result.completeAsync(() -> {
 
-                return result.completeAsync(()
-                        -> {
-                    Callable<Path> archive = null;
-                    PrintStream out = System.out;
-                    PrintStream err = System.err;
-                    try {
+                int exit = 0;
+                Callable<Path> archive = null;
+
+                PrintStream out = System.out;
+                PrintStream err = System.err;
+                Instant then = Instant.now();
+                Process p = null;
+                boolean timedOut = false;
+
+                try {
+                    if (daemon) {
                         logger.info("running in process " + commandFinal);
                         archive = redirectOutput(nvv, null);
-                        Launcher.mainWithExitCode(filteredArgs);
-                        return TRUE;
-                    } catch (RuntimeException ex) {
-                        //logger.log(Level.SEVERE, ex.getMessage(), ex);
-                        //result.completeExceptionally(ex);
-                        return FALSE;
-                    } catch (Exception ex) {
-                        //logger.log(Level.SEVERE, ex.getMessage(), ex);
-                        //result.completeExceptionally(ex);
-                        return FALSE;
-                    } finally {
-                        archiveOutput(nvv, archive);
-                        System.setOut(out);
-                        System.setErr(err);
-                    }
-                }, executor);
+                        exit = Launcher.mainWithExitCode(filteredArgs);
+                    } else {
 
-            } else {
-                return result.completeAsync(()
-                        -> {
-
-                    Callable<Path> archive = null;
-                    logger.info("spawning new process " + commandFinal);
-                    ProcessBuilder pb = new ProcessBuilder()
-                            .directory(dir.getParent().toFile())
-                            .command(filteredArgs);
-
-                    Instant then = Instant.now();
-
-                    Process p = null;
-                    try {
+                        logger.info("spawning new process " + commandFinal);
+                        ProcessBuilder pb = new ProcessBuilder()
+                                .directory(dir.getParent().toFile())
+                                .command(filteredArgs);
 
                         archive = redirectOutput(nvv, pb);
 
@@ -1632,6 +1605,7 @@ public class Rvn extends Thread {
                         if (logger.isLoggable(Level.FINEST)) {
                             logger.finest(pb.environment().entrySet().stream().map(e -> e.toString()).collect(Collectors.joining("\r\n", ",", "\r\n")));
                         }
+
                         if (javaHome != null && !javaHome.trim().isEmpty()) {
                             if (Files.exists(Paths.get(javaHome))) {
                                 pb.environment().put("JAVA_HOME", javaHome);
@@ -1649,50 +1623,43 @@ public class Rvn extends Thread {
 
                         processMap.put(dir, p);
 
-                        boolean timedOut = false;
                         //lock.unlock();
-
                         if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS)) {
-
                             timedOut = true;
-
                             stopBuild(nvv);
                         }
-
-                        logger.info(String.format(
-                                ANSI_CYAN + "%1$s " + ANSI_RESET + ((p.exitValue() == 0) ? ANSI_GREEN : ANSI_RED)
-                                + (timedOut ? "TIMEDOUT" : (p.exitValue() == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
-                                + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET,
-                                nvv, p.exitValue(), commandFinal, Duration.between(then, Instant.now())));
-
-                        return TRUE;
-                    } catch (Exception ex) {
-                        logger.log(Level.SEVERE, "wasted process" + ex.getMessage(), ex);
-                        result.completeExceptionally(ex);
-                    } finally {
-                        archiveOutput(nvv, archive);
-
-                        processMap.remove(dir);
-                        /**
-                         * try { lock.unlock(); } catch
-                         * (IllegalMonitorStateException x) { }*
-                         */
-
-                        if (p.exitValue() != 0) {
-                            result.complete(Boolean.FALSE);
-                            if (!Rvn.this.showOutput) { // TODO make configurable
-                                failMap.put(nvv, tf);
-                            }
-                        } else {
-                            result.complete(Boolean.TRUE);
-                            failMap.remove(nvv);
-                        }
-
-                        Rvn.this.then = Instant.now();
                     }
-                    return FALSE;
-                }, executor);
-            }
+                } catch (Exception ex) {
+                    logger.log(Level.SEVERE, "build failed " + ex.getMessage(), ex);
+                    result.completeExceptionally(ex);
+                } finally {
+                    Path output = archiveOutput(nvv, archive);
+
+                    if (daemon) {
+                        System.setOut(out);
+                        System.setErr(err);
+                    } else {
+                        processMap.remove(dir);
+                        exit = p.exitValue();
+                    }
+
+                    logger.info(String.format(
+                            ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED)
+                            + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
+                            + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s",
+                            nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : ""));
+
+                    if (exit != 0) {
+                        result.complete(Boolean.FALSE);
+                    } else {
+                        result.complete(Boolean.TRUE);
+                        failMap.remove(nvv);
+                    }
+
+                    Rvn.this.then = Instant.now();
+                }
+                return FALSE;
+            }, executor);
         }
 
         private void doBuildTimeout(NVV nvv) {
@@ -1703,12 +1670,13 @@ public class Rvn extends Thread {
             try {
                 //lock.unlock();
 
-                if (!doBuild(nvv, commandLocator).get(timeoutMap.getOrDefault(nvv, timeout).toMillis(),
-                        TimeUnit.MILLISECONDS)) {
+                //if (!
+                doBuild(nvv, commandLocator).get(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS);// {
                     //stopBuild(nvv); ? TODO:
-                    throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
-                            + ((tf != null) ? (ANSI_WHITE + tf.getAbsolutePath() + ANSI_RESET) : ""));
-                }
+               //     throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
+                //            + ((lastFile != null) ? (ANSI_WHITE + lastFile.toAbsolutePath().toString() + ANSI_RESET) : ""));
+                //}
+
                 logger.finest("builder next");
                 Thread.yield();
 
@@ -1725,7 +1693,9 @@ public class Rvn extends Thread {
         private Callable<Path> redirectOutput(NVV nvv, ProcessBuilder pb) throws IOException {
             File nf = null;
             File tf = null;
-            if (Rvn.this.showOutputMap.getOrDefault(nvv, Rvn.this.showOutput)) {
+            boolean showOutput = Rvn.this.showOutputMap.getOrDefault(nvv, Rvn.this.showOutput);
+
+            if (showOutput) {
                 tf = null;
                 if (pb != null) {
                     pb.inheritIO();
@@ -1744,6 +1714,7 @@ public class Rvn extends Thread {
                 } else {
                     nf = tf;
                 }
+
                 if (pb == null) {
                     System.setOut(new PrintStream(new FileOutputStream(nf)));
                     System.setErr(new PrintStream(new FileOutputStream(nf)));
@@ -1761,23 +1732,33 @@ public class Rvn extends Thread {
                     if (!Files.isSameFile(tp, np)) {
                         Files.copy(np, tp, StandardCopyOption.REPLACE_EXISTING);
                     }
+
+                    if (!showOutput) { // TODO make configurable
+                        Rvn.this.failMap.put(nvv, tp);
+                    }
                     return tp;
                 };
             }
 
         }
 
-        private void archiveOutput(NVV nvv, Callable<Path> archive) {
+        private Path archiveOutput(NVV nvv, Callable<Path> archive) {
             if (archive != null) {
                 try {
                     Path call = archive.call();
-                    logger.info("finally " + nvv.toString() + " " + call);
+                    logger.finest("finally " + nvv.toString() + " " + call);
+                    return call;
                 } catch (Exception ex) {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
                 }
             }
+            return null;
         }
 
+    }
+
+    private void writeFileToStdout(Path tp) throws FileNotFoundException, IOException {
+        this.writeFileToStdout(tp.toFile());
     }
 
     private void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
