@@ -23,7 +23,7 @@ import java.util.stream.StreamSupport;
  */
 public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
 
-    private Logger logger = Logger.getLogger(Graph.class.getName());
+    private Logger log = Logger.getLogger(Graph.class.getName());
     Deque<NVV> q = new ArrayDeque<>();
     ArrayBlockingQueue<NVV> oq;
 
@@ -57,13 +57,13 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                         return q.stream();
                     });
         }).distinct().forEach(e -> oq.add(e));
-        logger.fine("q->" + q.toString() + " " + q.size());
+        log.fine("q->" + q.toString() + " " + q.size());
         this.clear();
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
             @Override
             public boolean tryAdvance(Consumer<? super NVV> action) {
-                logger.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size() + " remaining");
+                log.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size() + " remaining");
                 NVV element = null;
                 try {
                     Thread.yield();
@@ -92,7 +92,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 .map(n -> new Edge(n.getKey(), n2))
                 .collect(Collectors.toSet()).stream()
                 .forEach(e -> {
-            logger.fine(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
+            log.fine(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
                     q.remove(e.nvv1);
                     q.offerFirst(e.nvv1);
 
