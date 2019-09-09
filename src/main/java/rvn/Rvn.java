@@ -868,23 +868,49 @@ public class Rvn extends Thread {
                     return FALSE;
                 }));
 
-        commandHandlers.add(new CommandHandler("-", "-", "Hide the output.", (command) -> {
-            if (command.equals("-")) {
-                Rvn.this.showOutput = false;
-                log.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
-                return TRUE;
-            }
-            return FALSE;
-        }));
+        commandHandlers.add(new CommandHandler("- {buildIndex}", "- 1", "Hide the output.",
+                (command) -> new SimpleCommand("^-\\s?([0-9]?)$") {
 
-        commandHandlers.add(new CommandHandler("+", "+", "Show the output.", (command) -> {
-            if (command.equals("+")) {
-                Rvn.this.showOutput = true;
-                log.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
-                return TRUE;
+                    public Boolean configure(Iterator<String> i) throws Exception {
+                        if (!i.hasNext()) {
+                            return FALSE;
+                        }
+
+                        i.next();
+                        if (i.hasNext()) {
+                            NVV nvv;
+                            Rvn.this.showOutputMap.put(nvv = this.getProject(i.next()), FALSE);
+                            log.warning(String.format("hiding output for %1$s", nvv.toString()));
+                            return TRUE;
+                        } else {
+                            Rvn.this.showOutput = false;
+                            log.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
+                            return TRUE;
+                        }
+                    }
+                }.apply(command)));
+
+        commandHandlers.add(new CommandHandler("+ {buildIndex}", "+ 1", "Show the output.", (command) -> new SimpleCommand("^\\+\\s([0-9]?)$") {
+
+            public Boolean configure(Iterator<String> i) throws Exception {
+                if (!i.hasNext()) {
+                    return FALSE;
+                }
+
+                i.next();
+
+                if (i.hasNext()) {
+                    NVV nvv;
+                    Rvn.this.showOutputMap.put(nvv = this.getProject(i.next()), TRUE);
+                    log.warning(String.format("showing output for %1$s", nvv.toString()));
+                    return TRUE;
+                } else {
+                    Rvn.this.showOutput = true;
+                    log.info((Rvn.this.showOutput) ? "showing output" : "hiding output");
+                    return TRUE;
+                }
             }
-            return FALSE;
-        }));
+        }.apply(command)));
 
         commandHandlers.add(new CommandHandler("|", "|", "Show the last failed output.", (command) -> {
             if (command.equals("|")) {
@@ -929,8 +955,7 @@ public class Rvn extends Thread {
             if (command.equals(">")) {
                 index.stream().filter(nvv -> failMap.containsKey(nvv)).filter(nvv -> failMap.get(nvv) != null)
                         .forEach(nvv -> {
-                    log.info(String.format(                                    ANSI_GREEN + "%1$s " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
-                                    buildIndex.indexOf(nvv), nvv, failMap.get(nvv)));
+                    log.info(String.format(ANSI_GREEN + "%1$s " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(nvv), nvv, failMap.get(nvv)));
                         });
                 return TRUE;
             }
@@ -1078,17 +1103,29 @@ public class Rvn extends Thread {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("timeout {number}", "timeout 60",
-                "Sets the maximum build timeout to 1 minute.", (command) -> {
-                    Pattern pattern = Pattern.compile("^timeout\\s([0-9]+)$");
-                    Matcher matcher = pattern.matcher(command);
-                    if (matcher.matches()) {
-                        timeout = Duration.ofSeconds(Integer.parseInt(matcher.group(1)));
-                        log.warning(String.format("timeout is %1$s second", timeout.toString()));
-                        return TRUE;
-                    }
+        commandHandlers.add(new CommandHandler("timeout {number} {buildIndex}", "timeout 60 1",
+                "Sets the maximum build timeout to 1 minute.", (command) -> new SimpleCommand("^timeout\\s([0-9]+)\\s([0-9]?)$") {
+
+            public Boolean configure(Iterator<String> i) throws Exception {
+                if (!i.hasNext()) {
                     return FALSE;
-                }));
+                }
+
+                        i.next();
+
+                        Duration timeout = Duration.ofSeconds(Integer.parseInt(i.next()));
+                        if (i.hasNext()) {
+                            NVV nvv;
+                            Rvn.this.timeoutMap.put(nvv = this.getProject(i.next()), timeout);
+                            log.warning(String.format("timeout for %1$s is %2$s second", nvv.toString(), timeout.toString()));
+                            return TRUE;
+                        } else {
+                            Rvn.this.timeout = timeout;
+                            log.warning(String.format("timeout is %1$s second", timeout.toString()));
+                            return TRUE;
+                        }
+                    }
+                }.apply(command)));
 
         commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
             if (command.trim().equals("/")) {
@@ -1100,7 +1137,7 @@ public class Rvn extends Thread {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("q", "", "Proceed with all builds waiting.", (command) -> {
+        commandHandlers.add(new CommandHandler("q", "", "Stop all builds and exit.", (command) -> {
             if (command.trim().equalsIgnoreCase("q")) {
                 log.info("blitzkreik");
 
@@ -1132,60 +1169,60 @@ public class Rvn extends Thread {
         }));
         commandHandlers.add(new CommandHandler("0-100", "100", "Builds the project(s) for the given project number.", (command) -> {
 
-                    Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> s.trim()).map(s -> {
-                        try {
-                            return Integer.valueOf(s);
-                        } catch (Exception x) {
-                        }
-                        return s;
-                    }).iterator();
+            Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> s.trim()).map(s -> {
+                try {
+                    return Integer.valueOf(s);
+                } catch (Exception x) {
+                }
+                return s;
+            }).iterator();
 
-                    Integer i = null;
-                    Object o = null;
-                    StringBuilder cmd = new StringBuilder();
+            Integer i = null;
+            Object o = null;
+            StringBuilder cmd = new StringBuilder();
 
-                    OUTER:
-                    while (it.hasNext()) {
-                        o = it.next();
+            OUTER:
+            while (it.hasNext()) {
+                o = it.next();
 
-                        if (o instanceof Integer) {
-                            if (i != null && cmd.length() == 0) {
-                                this.buildAllCommands(i);
-                            }
-                            i = (Integer) o;
-                            o = null;
-                        } else if (o instanceof String) {
-                            if (i == null) {
-                                return FALSE;
-                            }
-                            cmd.append(o.toString());
-                            INNER:
-                            while (it.hasNext()) {
-                                o = it.next();
-                                if (o instanceof String) {
-                                    cmd.append(' ').append(o.toString());
-                                } else if (o instanceof Integer) {
-                                    i = (Integer) o;
-                                    break OUTER;
-                                }
-                            }
-
-                            if (i != null && cmd.length() > 0) {
-                                this.buildAllCommands(i, cmd.toString());
-                                cmd = new StringBuilder();
-                                i = null;
-                            }
-
-                        }
-                    }
-
+                if (o instanceof Integer) {
                     if (i != null && cmd.length() == 0) {
                         this.buildAllCommands(i);
                     }
+                    i = (Integer) o;
+                    o = null;
+                } else if (o instanceof String) {
+                    if (i == null) {
+                        return FALSE;
+                    }
+                    cmd.append(o.toString());
+                    INNER:
+                    while (it.hasNext()) {
+                        o = it.next();
+                        if (o instanceof String) {
+                            cmd.append(' ').append(o.toString());
+                        } else if (o instanceof Integer) {
+                            i = (Integer) o;
+                            break OUTER;
+                        }
+                    }
+
+                    if (i != null && cmd.length() > 0) {
+                        this.buildAllCommands(i, cmd.toString());
+                        cmd = new StringBuilder();
+                        i = null;
+                    }
+
+                }
+            }
+
+            if (i != null && cmd.length() == 0) {
+                this.buildAllCommands(i);
+            }
 
             log.fine("swallowing command");
-                    return TRUE;
-                }));
+            return TRUE;
+        }));
     }
 
     private void writeHashes() throws IOException {
@@ -1670,8 +1707,8 @@ public class Rvn extends Thread {
 
                 //if (!
                 doBuild(nvv, commandLocator).get(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS);// {
-                    //stopBuild(nvv); ? TODO:
-               //     throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
+                //stopBuild(nvv); ? TODO:
+                //     throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
                 //            + ((lastFile != null) ? (ANSI_WHITE + lastFile.toAbsolutePath().toString() + ANSI_RESET) : ""));
                 //}
 
@@ -2142,6 +2179,60 @@ public class Rvn extends Thread {
                 log.fine("handled by " + verb);
             }
             return applied;
+        }
+
+    }
+
+    public abstract class SimpleCommand implements Function< String, Boolean> {
+
+        private final Pattern pattern;
+
+        public SimpleCommand(String pattern) {
+            this(Pattern.compile(pattern));
+        }
+
+        public SimpleCommand(Pattern pattern) {
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Boolean apply(String command) {
+            Matcher matcher = pattern.matcher(command);
+
+            if (matcher.matches()) {
+                List<String> matches = new ArrayList<>(matcher.groupCount());
+
+                for (int i = 0; i <= matcher.groupCount(); i++) {
+                    matches.add(matcher.group(i));
+                }
+
+                log.severe(matcher.groupCount() + " " + matches.toString());
+
+                try {
+                    return this.configure(matches.iterator());
+                } catch (Exception ex) {
+                    log.severe(matcher.groupCount() + " " + matches.toString() + " " + ex.getClass().getName() + " " + ex.getMessage());
+                    return FALSE;
+                }
+            }
+            return FALSE;
+        }
+
+        public abstract Boolean configure(Iterator<String> i) throws Exception;
+
+        public NVV getProject(String s) throws Exception {
+
+            int buildIndex = Integer.parseInt(s);
+            if (between(buildIndex, 0, Rvn.this.buildIndex.size())) {
+                NVV nvv = Rvn.this.buildIndex.get(buildIndex);
+                return nvv;
+            } else {
+                throw new Exception(buildIndex + " out of bounds ");
+            }
+        }
+
+        private boolean between(int i, int min, int max) {
+            return i >= min && i <= max;
         }
 
     }
