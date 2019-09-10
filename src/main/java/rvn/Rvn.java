@@ -1597,7 +1597,7 @@ public class Rvn extends Thread {
             if (daemon) {
                 command = command.replace("mvn ", "-Drvn.mvn");
             } else {
-                command = command.replace("mvn ", mvnCmd);
+                command = command.replace("mvn ", mvnCmd + " ");
             }
             command = command + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ";
 
