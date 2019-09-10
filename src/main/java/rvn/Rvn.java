@@ -1979,28 +1979,40 @@ public class Rvn extends Thread {
         }
         if (result.hasMember(key = "watchDirectories")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            this.matchDirIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
-            this.matchDirExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
-            log.fine(key + " includes " + matchDirIncludes.toString());
-            log.fine(key + " excludes " + matchDirExcludes.toString());
+            if (v.hasMember("includes")) {
+                this.matchDirIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
+                log.fine(key + " includes " + matchDirIncludes.toString());
+            }
+            if (v.hasMember("excludes")) {
+                this.matchDirExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+                log.fine(key + " excludes " + matchDirExcludes.toString());
+            }
         }
 
         if (result.hasMember(key = "activeFiles")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            this.matchFileIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
-            this.matchFileExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+            if (v.hasMember("includes")) {
+                this.matchFileIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
+                log.fine(key + " includes " + matchFileIncludes.toString());
+            }
+            if (v.hasMember("excludes")) {
+                this.matchFileExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+                log.fine(key + " excludes " + matchFileExcludes.toString());
+            }
 
-            log.fine(key + " includes " + matchFileIncludes.toString());
-            log.fine(key + " excludes " + matchFileExcludes.toString());
         }
 
         if (result.hasMember(key = "activeArtifacts")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            this.matchArtifactIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
-            this.matchArtifactExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+            if (v.hasMember("includes")) {
+                this.matchArtifactIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
+                log.fine(key + " includes " + matchArtifactIncludes.toString());
+            }
+            if (v.hasMember("excludes")) {
+                this.matchArtifactExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+                log.fine(key + " excludes " + matchArtifactExcludes.toString());
+            }
 
-            log.fine(key + " includes " + matchArtifactIncludes.toString());
-            log.fine(key + " excludes " + matchArtifactExcludes.toString());
         }
 
         if (result.hasMember(key = "buildCommands")) {
