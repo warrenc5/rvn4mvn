@@ -71,6 +71,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
@@ -692,7 +693,7 @@ public class Rvn extends Thread {
             }
         });
 
-        futureMap.computeIfAbsent(nvv, (nvv1) -> {
+        futureMap.computeIfAbsent(nvv, nvv1 -> {
             log.fine(String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
             Future<?> future = executor.schedule(() -> {
                 log.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
@@ -1267,6 +1268,7 @@ public class Rvn extends Thread {
                 this.processMap.remove(nvv);
             }
         }
+
         if (this.futureMap.containsKey(nvv)) {
             log.info("cancelling future " + nvv.toString());
             try {
@@ -1522,14 +1524,27 @@ public class Rvn extends Thread {
                 } else if ("exit".equals(command)) {
                     System.exit(0);
                 }
-                CompletableFuture<Boolean> future = doBuild(nvv, command, dir);
-                if (result == null) {
-                    result = future;
-                } else {
-                    result.thenCombine(future, (b, v) -> b && v);
+
+                boolean block = false;
+
+                if (command.startsWith("-")) {
+                    block = true;
+                    command = command.substring(1);
                 }
 
-                Rvn.this.futureMap.put(nvv, future);
+                CompletableFuture<Boolean> future = doBuild(nvv, command, dir);
+
+                if (result == null) {
+                    result = future;
+                    Rvn.this.futureMap.put(nvv, result);
+                }
+
+                if (block) {
+                    result.join();
+                } else {
+                    result.thenCombineAsync(future, (b, v) -> b && v);
+                }
+
             }
 
             if (result == null) {
@@ -1546,12 +1561,12 @@ public class Rvn extends Thread {
         private CompletableFuture<Boolean> doBuild(NVV nvv, String command, Path dir) {
 
             CompletableFuture<Boolean> result = new CompletableFuture<>();
-
             String mvnCmd = mvnCmdMap.getOrDefault(nvv, Rvn.this.mvnCmd);
             String mvnOpts = mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
             String javaHome = javaHomeMap.getOrDefault(nvv, Rvn.this.javaHome);
-
             String mvn = "mvn ";
+            int commandIndex = calculateCommandIndex(nvv, command, dir);
+
             if (command.indexOf(mvn) >= 0 && command.indexOf("-f") == -1) {
                 command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -f %1$s ")
                         .toString();
@@ -1592,21 +1607,24 @@ public class Rvn extends Thread {
                 }
             }
 
-            boolean daemon = daemonMap.getOrDefault(nvv, Rvn.this.daemon);
+            boolean daemon = daemonMap.getOrDefault(nvv, Rvn.this.daemon) && command.contains(mvn);
 
             if (daemon) {
                 command = command.replace("mvn ", "-Drvn.mvn");
             } else {
                 command = command.replace("mvn ", mvnCmd + " ");
             }
-            command = command + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ";
+
+            if (command.contains(mvn)) {
+                command = command + " " + mvnArgsMap.getOrDefault(nvv, mvnArgs) + " ";
+            }
 
             final String commandFinal = String.format(command, dir);
             String[] args = commandFinal.split(" ");
             final List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
             final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
-            return result.completeAsync(() -> {
+            Supplier<Boolean> task = () -> {
 
                 int exit = 0;
                 Callable<Path> archive = null;
@@ -1620,7 +1638,7 @@ public class Rvn extends Thread {
                 try {
                     if (daemon) {
                         log.info("running in process " + commandFinal);
-                        archive = redirectOutput(nvv, null);
+                        archive = redirectOutput(nvv, commandIndex, null);
                         exit = Launcher.mainWithExitCode(filteredArgs);
                     } else {
 
@@ -1629,7 +1647,7 @@ public class Rvn extends Thread {
                                 .directory(dir.getParent().toFile())
                                 .command(filteredArgs);
 
-                        archive = redirectOutput(nvv, pb);
+                        archive = redirectOutput(nvv, commandIndex, pb);
 
                         pb.environment().putAll(System.getenv());
 
@@ -1694,7 +1712,9 @@ public class Rvn extends Thread {
                     Rvn.this.then = Instant.now();
                 }
                 return FALSE;
-            }, executor);
+            };
+
+            return result.completeAsync(task, executor);
         }
 
         private void doBuildTimeout(NVV nvv) {
@@ -1725,7 +1745,7 @@ public class Rvn extends Thread {
             }
         }
 
-        private Callable<Path> redirectOutput(NVV nvv, ProcessBuilder pb) throws IOException {
+        private Callable<Path> redirectOutput(NVV nvv, int commandIndex, ProcessBuilder pb) throws IOException {
             File nf = null;
             File tf = null;
             boolean showOutput = Rvn.this.showOutputMap.getOrDefault(nvv, Rvn.this.showOutput);
@@ -1740,7 +1760,7 @@ public class Rvn extends Thread {
                 tf = File.createTempFile("rvn-", "-" + nvv.toString().replace(':', '-') + ".out");
 
                 if (reuseOutputMap.getOrDefault(nvv, reuseOutput)) {
-                    nf = new File(tf.getParentFile(), "rvn-" + nvv.toString().replace(':', '-') + ".out");
+                    nf = new File(tf.getParentFile(), "rvn-" + nvv.toString().replace(':', '-') + "-" + commandIndex + ".out");
                     if (!tf.renameTo(nf)) {
                         if (!nf.exists()) {
                             log.warning("rename file failed " + nf.getAbsolutePath());
@@ -1788,6 +1808,20 @@ public class Rvn extends Thread {
                 }
             }
             return null;
+        }
+
+        private Map<NVV, List<String>> commandIndex = new HashMap<>();
+
+        private int calculateCommandIndex(NVV nvv, String command, Path dir) {
+
+            List<String> list = commandIndex.computeIfAbsent(nvv, nvv1 -> new ArrayList<>());
+
+            if (!list.contains(command)) {
+                list.add(command);
+            }
+
+            return list.indexOf(command);
+
         }
 
     }
