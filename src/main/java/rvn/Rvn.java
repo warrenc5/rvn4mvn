@@ -1456,6 +1456,18 @@ public class Rvn extends Thread {
                 || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
+	private void createConfiguration(Path config) throws IOException {
+	    URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
+        try (Reader reader = new InputStreamReader(configURL.openStream());
+                Writer writer = new FileWriter(config.toFile());) {
+		    while (reader.ready()) {
+			    writer.write(reader.read());
+		    }
+		    writer.flush();
+	    }
+	    log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
+	}
+
     class BuildIt extends Thread {
 
         public BuildIt() {
@@ -1936,20 +1948,15 @@ public class Rvn extends Thread {
 
         if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
             config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.json");
-            if (!Files.exists(config)) {
+if (!Files.exists(config)) {
                 log.info(String.format("%1$s doesn't exist, creating it from " + ANSI_WHITE + "%2$s" + ANSI_RESET,
                         config, configURL));
-                try (Reader reader = new InputStreamReader(configURL.openStream()); Writer writer = new FileWriter(config.toFile());) {
-                    while (reader.ready()) {
-                        writer.write(reader.read());
-                    }
-                    writer.flush();
-                }
-                log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
+	    createConfiguration(config);
+
             } else {
                 log.info(String.format("%1$s exists", config));
             }
-
+            
         } else {
             config = Paths.get(configURL.toURI());
             log.fine(String.format("trying configuration %1$s", configURL));
