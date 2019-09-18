@@ -123,6 +123,7 @@ public class Rvn extends Thread {
     private Map<NVV, Set<NVV>> projects;
     private Map<NVV, NVV> parent;
     private Map<NVV, Path> failMap; //TODO store fail for each command
+    private List<Path> logs;
     private Map<Path, Process> processMap;
 
     private Map<String, List<String>> commands;
@@ -267,6 +268,7 @@ public class Rvn extends Thread {
         reuseOutputMap = new HashMap<>();
         showOutputMap = new HashMap<>();
         daemonMap = new HashMap<>();
+        logs = new ArrayList<>();
         reuseOutput = FALSE;
         mvnOpts = "";
         javaHome = "";
@@ -919,6 +921,23 @@ public class Rvn extends Thread {
             }
         }.apply(command)));
 
+        commandHandlers.add(new CommandHandler("_", "_", "Show the last output passed or failed.", (command) -> {
+            if (command.equals("_")) {
+                try {
+                    Iterator<Path> it = logs.iterator();
+                    if (it.hasNext()) {
+                        Path last = it.next();
+                        writeFileToStdout(last);
+                        it.remove();
+                    }
+                } catch (IOException ex) {
+                    log.info(ex.getMessage());
+                }
+                return TRUE;
+            }
+            return FALSE;
+        }));
+
         commandHandlers.add(new CommandHandler("|", "|", "Show the last failed output.", (command) -> {
             if (command.equals("|")) {
                 try {
@@ -1528,6 +1547,7 @@ public class Rvn extends Thread {
             if (processMap.containsKey(dir)) {
                 log.warning(String.format("already building " + ANSI_CYAN + "%1$s" + ANSI_RESET, nvv));
                 (result = new CompletableFuture<>()).complete(FALSE);
+                return result;
             }
 
             List<String> commandList = commandLocator.apply(nvv, dir);
@@ -1801,6 +1821,7 @@ public class Rvn extends Thread {
                 Path tp = Path.of(tf.toURI());
                 Path np = Path.of(nf.toURI());
                 return () -> {
+                    logs.add(tp);
                     if (!Files.isSameFile(tp, np)) {
                         Files.copy(np, tp, StandardCopyOption.REPLACE_EXISTING);
                     }
