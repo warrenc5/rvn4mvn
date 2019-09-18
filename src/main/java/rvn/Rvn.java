@@ -63,6 +63,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
@@ -317,7 +318,7 @@ public class Rvn extends Thread {
     public void registerPath(Path path) {
         try {
             if (Files.isDirectory(path)) {
-                try (Stream<Path> stream = Files.list(path)) {
+                try ( Stream<Path> stream = Files.list(path)) {
                     stream.filter(child -> matchSafe(child)).forEach(this::registerPath);
                 }
             } else if (path.toFile().toString().endsWith(".pom")) {
@@ -348,12 +349,12 @@ public class Rvn extends Thread {
 
     public Optional<FileTime> watchRecursively(Path dir) {
         watch(dir);
-        try (Stream<Path> stream = Files.list(dir)) {
+        try ( Stream<Path> stream = Files.list(dir)) {
             stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).forEach(this::watchRecursively);
         } catch (IOException ex) {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         }
-        try (Stream<Path> stream = Files.list(dir)) {
+        try ( Stream<Path> stream = Files.list(dir)) {
             return stream.map(child -> {
                 try {
                     LinkOption option = LinkOption.NOFOLLOW_LINKS;
@@ -683,10 +684,15 @@ public class Rvn extends Thread {
             if (future.isDone()) {
                 return null;
             } else if (interrupt) {
-                synchronized (futureMap) {
-                    Rvn.this.stopBuild(nvv);
+                if (future instanceof ScheduledFuture) {
+                    log.fine("already scheduled " + nvv1.toString());
+                    return null;
+                } else {
+                    synchronized (futureMap) {
+                        Rvn.this.stopBuild(nvv);
+                    }
+                    return null;
                 }
-                return null;
             } else {
                 log.fine("already queued/running " + nvv1.toString());
                 return future;
@@ -695,7 +701,7 @@ public class Rvn extends Thread {
 
         futureMap.computeIfAbsent(nvv, nvv1 -> {
             log.fine(String.format("submitting %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
-            Future<?> future = executor.schedule(() -> {
+            ScheduledFuture<?> future = executor.schedule(() -> {
                 log.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
                 try {
                     Rvn.this.qBuild(nvv, nvv);
@@ -1456,17 +1462,16 @@ public class Rvn extends Thread {
                 || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
-	private void createConfiguration(Path config) throws IOException {
-	    URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
-        try (Reader reader = new InputStreamReader(configURL.openStream());
-                Writer writer = new FileWriter(config.toFile());) {
-		    while (reader.ready()) {
-			    writer.write(reader.read());
-		    }
-		    writer.flush();
-	    }
-	    log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
-	}
+    private void createConfiguration(Path config) throws IOException {
+        URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
+        try ( Reader reader = new InputStreamReader(configURL.openStream());  Writer writer = new FileWriter(config.toFile());) {
+            while (reader.ready()) {
+                writer.write(reader.read());
+            }
+            writer.flush();
+        }
+        log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
+    }
 
     class BuildIt extends Thread {
 
@@ -1493,7 +1498,7 @@ public class Rvn extends Thread {
                     }
                 }
 
-                try (Stream<NVV> path = q.paths()) {
+                try ( Stream<NVV> path = q.paths()) {
                     if (path == null) {
                         continue;
                     }
@@ -1844,7 +1849,7 @@ public class Rvn extends Thread {
 
     private void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
         if (tf != null) {
-            try (FileReader reader = new FileReader(tf)) {
+            try ( FileReader reader = new FileReader(tf)) {
                 char c[] = new char[1024];
                 while (reader.ready()) {
                     int l = reader.read(c);
@@ -1948,15 +1953,15 @@ public class Rvn extends Thread {
 
         if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
             config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.json");
-if (!Files.exists(config)) {
+            if (!Files.exists(config)) {
                 log.info(String.format("%1$s doesn't exist, creating it from " + ANSI_WHITE + "%2$s" + ANSI_RESET,
                         config, configURL));
-	    createConfiguration(config);
+                createConfiguration(config);
 
             } else {
                 log.info(String.format("%1$s exists", config));
             }
-            
+
         } else {
             config = Paths.get(configURL.toURI());
             log.fine(String.format("trying configuration %1$s", configURL));
