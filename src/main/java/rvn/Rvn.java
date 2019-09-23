@@ -466,9 +466,13 @@ public class Rvn extends Thread {
 
     private void processPath(String uri)
             throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
+        this.processPath(uri, false);
+    }
+
+    private void processPath(String uri, boolean immediate) throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
         log.fine("in ->" + uri);
         Path path = Paths.get(uri);
-        processPath(path);
+        processPath(path, immediate);
     }
 
     private void processPath(Path path)
@@ -1057,9 +1061,10 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("#", "#", "Build all projects outdated by hashes", (command) -> {
             if (command.trim().equals("#")) {
+
                 this.hashes.forEach((k, v) -> {
                     try {
-                        this.processPath(k);
+                        this.processPath(k, true);
                     } catch (Exception ex) {
                         log.severe(ex.getMessage());
                     }
@@ -1233,6 +1238,7 @@ public class Rvn extends Thread {
                 NVV nvv = this.buildIndex.get(index);
                 Integer cmdIndex = null;
                 List<String> commands = this.locateCommand(nvv, null);
+
                 if (matcher.groupCount() == 2 && !matcher.group(2).isBlank()) {
 
                     cmdIndex = Integer.parseInt(matcher.group(2));
@@ -1487,6 +1493,10 @@ public class Rvn extends Thread {
             }
         } else {
             lastCommand.put(nvv, command);
+        }
+
+        if (command.startsWith("!")) {
+            command = command.substring(1);
         }
 
         String cmd = command;
@@ -1832,14 +1842,12 @@ public class Rvn extends Thread {
         private void doBuildTimeout(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
             try {
                 //lock.unlock();
+                Future future = doBuild(nvv, commandLocator);
+                if (future == null) {
+                    throw new RuntimeException("no result, add some buildCommands to .rvn.json config file");
+                }
 
-                //if (!
-                doBuild(nvv, commandLocator).get(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS);// {
-                //stopBuild(nvv); ? TODO:
-                //     throw new RuntimeException(ANSI_CYAN + nvv + ANSI_RESET + " failed "
-                //            + ((lastFile != null) ? (ANSI_WHITE + lastFile.toAbsolutePath().toString() + ANSI_RESET) : ""));
-                //}
-
+                future.get(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS);// {
                 log.finest("builder next");
                 Thread.yield();
 
