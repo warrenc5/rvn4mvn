@@ -59,6 +59,7 @@ import java.util.Spliterators;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutionException;
@@ -1345,6 +1346,7 @@ public class Rvn extends Thread {
 
     private void stopBuild(NVV nvv) {
         log.info("stopping " + nvv.toString());
+
         if (this.processMap.containsKey(nvv)) {
             log.info("stopping process " + nvv.toString());
             try {
@@ -1375,6 +1377,8 @@ public class Rvn extends Thread {
                 this.futureMap.remove(nvv);
             }
         }
+
+        Rvn.this.resetOut();
         log.info("stopped " + nvv.toString());
     }
 
@@ -1568,7 +1572,7 @@ public class Rvn extends Thread {
         if (futureMap.isEmpty()) {
             log.warning("no future");
         } else {
-            this.futureMap.keySet().forEach(nvv -> stopBuild(nvv));
+            this.futureMap.keySet().forEach(nvv -> this.stopBuild(nvv));
         }
         executor.shutdownNow();
         executor = new ScheduledThreadPoolExecutor(1);
@@ -1853,8 +1857,19 @@ public class Rvn extends Thread {
 
             } catch (CancellationException x) {
                 log.warning(ANSI_RED + "Cancelled" + ANSI_RESET + " " + nvv.toString());
+            } catch (CompletionException ex) {
+                if (ex.getCause() instanceof InterruptedException) {
+                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " interrupted");
+                } else if (ex.getCause() instanceof TimeoutException) {
+                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " timedout");
+                } else {
+                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " completed with " + ex.getClass().getSimpleName()
+                            + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace())
+                            .subList(0, ex.getStackTrace().length).toString());
+                    log.log(Level.SEVERE, ex.getMessage(), ex);
+                }
             } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
-                log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " because " + ex.getClass().getSimpleName()
+                log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " waiting for build " + nvv.toString() + " because " + ex.getClass().getSimpleName()
                         + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace())
                         .subList(0, ex.getStackTrace().length).toString());
                 log.log(Level.SEVERE, ex.getMessage(), ex);
@@ -1945,11 +1960,11 @@ public class Rvn extends Thread {
 
         }
 
-        private void resetOut() {
-            System.setOut(out);
-            System.setErr(err);
-        }
+    }
 
+    private void resetOut() {
+        System.setOut(out);
+        System.setErr(err);
     }
 
     private void writeFileToStdout(Path tp) throws FileNotFoundException, IOException {
