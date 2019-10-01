@@ -128,6 +128,7 @@ public class Rvn extends Thread {
     private List<Path> logs;
     private List<Path> paths;
     private Map<Path, Process> processMap;
+    private Map<Integer, String> previousCmdIdx;
 
     private Map<String, List<String>> commands;
 
@@ -142,7 +143,9 @@ public class Rvn extends Thread {
     private List<String> pomFileNames;
     private List<CommandHandler> commandHandlers;
 
+    private ImportFinder iFinder;
     private Logger log = Logger.getLogger(Rvn.class.getName());
+    private static Logger slog = Logger.getLogger(Rvn.class.getName());
 
     private MessageDigest md = null;
 
@@ -252,6 +255,7 @@ public class Rvn extends Thread {
         lastBuild = new HashMap<>();
         lastUpdate = new HashMap<>();
         processMap = new LinkedHashMap<>();
+        previousCmdIdx = new HashMap<>();
         failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
         hashes = new HashMap<>();
@@ -301,7 +305,12 @@ public class Rvn extends Thread {
 
         while (this.isAlive()) {
             Thread.yield();
-            StreamSupport.stream(splt, false).onClose(scanner::close).forEach(this::processCommand);
+            try {
+                StreamSupport.stream(splt, false).onClose(scanner::close).forEach(this::processCommand);
+            } catch (Exception x) {
+                log.info(x.getMessage() + " in cmd handler");
+                log.log(Level.WARNING, x.getMessage(), x);
+            }
         }
 
         log.info(String.format("commandless"));
@@ -407,6 +416,7 @@ public class Rvn extends Thread {
         this.buildIndex();
         this.calculateToBuild();
 
+        this.iFinder = new ImportFinder(this.paths);
         log.info(String.format(ANSI_WHITE + "watching %1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET,
                 buildPaths.size(), projects.size(), keys.size(), duration.toString()));
     }
@@ -944,15 +954,19 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("_", "_", "Show the last output passed or failed.", (command) -> {
             if (command.equals("_")) {
+                Iterator<Path> it = logs.iterator();
+                Path last = null;
                 try {
-                    Iterator<Path> it = logs.iterator();
                     if (it.hasNext()) {
-                        Path last = it.next();
+                        last = it.next();
                         writeFileToStdout(last);
-                        it.remove();
                     }
                 } catch (IOException ex) {
                     log.info(ex.getMessage());
+                } finally {
+                    if (last != null) {
+                        it.remove();
+                    }
                 }
                 return TRUE;
             }
@@ -1217,8 +1231,8 @@ public class Rvn extends Thread {
                 futureMap.forEach((nvv, future) -> {
                     this.executor.submit(() -> {
                         future.cancel(true);
-                        qBuild(nvv, nvv);
                         futureMap.remove(nvv);
+                        qBuild(nvv, nvv);
                         return null;
                     });
                 });
@@ -1227,8 +1241,8 @@ public class Rvn extends Thread {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("[:num:]+/[:num:]+", "100/2", "Builds the given project with the commands. To list commands omit the second argument.", (command) -> {
-            Pattern re = Pattern.compile("([0-9]+)/([0-9]*)");
+        commandHandlers.add(new CommandHandler("[:num:]+``?[:num:,\\-]+", "100`l,3-5", "Builds the given project with the commands. To rebuild last use ``,  To list commands omit the second argument.", (command) -> {
+            Pattern re = Pattern.compile("([0-9]+)`([0-9,\\-]*)");
 
             Matcher matcher = re.matcher(command);
             if (matcher.matches()) {
@@ -1236,17 +1250,31 @@ public class Rvn extends Thread {
                     return Boolean.FALSE;
                 }
                 Integer index = Integer.parseInt(matcher.group(1));
+                if (this.buildIndex.size() <= index) {
+                    log.info("not enough commands" + index);
+                    return TRUE;
+                }
                 NVV nvv = this.buildIndex.get(index);
                 Integer cmdIndex = null;
                 List<String> commands = this.locateCommand(nvv, null);
 
                 if (matcher.groupCount() == 2 && !matcher.group(2).isBlank()) {
 
-                    cmdIndex = Integer.parseInt(matcher.group(2));
-                    String cmd = commands.get(cmdIndex);
+                    String cmd = null;
 
-                    log.info(cmd);
-                    this.buildACommand(nvv, cmd);
+                    if ("`".equals(matcher.group(2))) {
+                        cmd = this.previousCmdIdx.get(index);
+                    } else {
+                        cmd = matcher.group(2);
+                        this.previousCmdIdx.put(index, cmd);
+                    }
+
+                    List<Integer> rangeIdx = rangeToIndex(cmd);
+                    for (Integer cmdIdx : rangeIdx) {
+                        cmd = commands.get(cmdIdx);
+                        log.info(cmd);
+                        this.buildACommand(nvv, cmd);
+                    }
                 } else {
                     AtomicInteger i = new AtomicInteger();
                     commands.stream().forEach(s -> this.log.info(i.getAndIncrement() + " " + s));
@@ -1574,8 +1602,8 @@ public class Rvn extends Thread {
         } else {
             this.futureMap.keySet().forEach(nvv -> this.stopBuild(nvv));
         }
-        executor.shutdownNow();
-        executor = new ScheduledThreadPoolExecutor(1);
+        //FIXME: executor.shutdownNow();
+        //executor = new ScheduledThreadPoolExecutor(1);
     }
 
     private boolean isConfigFile(Path path) throws IOException {
@@ -1984,19 +2012,33 @@ public class Rvn extends Thread {
         }
     }
 
+    private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
+
     private List<String> locateCommand(NVV nvv, Path path) {
         List<String> commandList = new ArrayList<>();
+        if (lastChangeFile != null && iFinder.isJava(lastChangeFile)) {
+            String test = null;
 
-        if (lastChangeFile != null) {
-            //Pattern testRe = Pattern.compile("^.*src[:punct:]test[:punct:]java[:punct:](.*Test).java$");
-            Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
+            if (iFinder.isJavaTest(lastChangeFile)) {
+                Matcher matcher = testRe.matcher(lastChangeFile.toAbsolutePath().toString());
+                if (matcher.matches()) {
+                    test = matcher.group(1).replaceAll("/".equals(File.separator) ? "/" : "\\\\", ".");
+                } else {
+                    try {
+                        test = iFinder
+                                .findImports(lastChangeFile).stream()
+                                .filter(p -> iFinder.isJavaTest(p))
+                                .map(p -> p.getFileName())
+                                .map(p -> p.toString().substring(0, p.toString().length() - 5))
+                                .collect(Collectors.joining(","));
+                    } catch (IOException ex) {
+                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+                //Pattern testRe = Pattern.compile("^.*src[:punct:]test[:punct:]java[:punct:](.*Test).java$");
 
-            Matcher matcher = testRe.matcher(lastChangeFile.toAbsolutePath().toString());
-
-            //if (command.indexOf(mvn) >= 0 && command.endsWith("-Dtest=")) {
-            if (matcher.matches()) {
-
-                commandList.add(String.format("mvn test -Dtest=" + "%1$s", matcher.group(1).replaceAll("/".equals(File.separator) ? "/" : "\\\\", ".")));
+                //if (command.indexOf(mvn) >= 0 && command.endsWith("-Dtest=")) {
+                commandList.add(String.format("mvn test -Dtest=" + "%1$s", test));
                 return commandList;
             }
         }
@@ -2345,6 +2387,45 @@ public class Rvn extends Thread {
         return result;
     }
 
+    public static List<Integer> rangeToIndex(String range) {
+        slog.info(range);
+        List<Integer> list = new ArrayList();
+
+        String[] split = range.split(",");
+
+        for (String s : split) {
+
+            int b = 0;
+            int e = 0;
+            if (s.indexOf('-') > 0) {
+                String[] r = s.split("-");
+                switch (r.length) {
+                    case 0:
+                        list.add(-1);
+                        break;
+                    case 1:
+                        b = Integer.parseInt(r[0]);
+                        e = list.size();
+                        break;
+                    case 2:
+                        b = Integer.parseInt(r[0]);
+                        e = Integer.parseInt(r[1]);
+                        break;
+                    default:
+
+                }
+                for (int i = b; i <= e; i++) {
+                    list.add(i);
+                }
+
+            } else {
+                b = Integer.parseInt(s);
+                list.add(b);
+            }
+        }
+        return list;
+    }
+
     private ScriptEngine getEngine() {
         ScriptEngineManager manager = new ScriptEngineManager();
         ScriptEngine engine = manager.getEngineByName("JavaScript");
@@ -2374,7 +2455,7 @@ public class Rvn extends Thread {
         public Boolean apply(String t) {
             boolean applied = this.fun.apply(t);
             if (applied) {
-                log.fine("handled by " + verb);
+                log.info("handled by " + verb);
             }
             return applied;
         }

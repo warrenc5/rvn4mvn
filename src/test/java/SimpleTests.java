@@ -1,6 +1,8 @@
 
 import static java.lang.Boolean.TRUE;
+import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import static org.junit.Assert.assertEquals;
@@ -38,4 +40,13 @@ public class SimpleTests {
         assertTrue(result);
     }
 
+    @Test
+    public void indexRange() {
+        String range = "10,11,1-3,8,6-9,9";
+
+        List<Integer> list = Rvn.rangeToIndex(range);
+        List<Integer> expected = Arrays.asList(new Integer[]{10, 11, 1, 2, 3, 8, 6, 7, 8, 9, 9});
+        assertEquals(expected, list);
+
+    }
 }
