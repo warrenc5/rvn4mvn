@@ -197,7 +197,9 @@ public class Rvn extends Thread {
     private Instant thenStarted = null;
     private Path lastChangeFile;
     private final BuildIt buildIt;
-    private Path hashConfig;
+	private Path hashConfig;
+
+	private String userHome = System.getProperty("user.home");
 
     ScheduledThreadPoolExecutor executor;
 
@@ -237,11 +239,12 @@ public class Rvn extends Thread {
 
         buildIt = new BuildIt();
         buildIt.start();
-    }
+	}
 
     public void init() throws Exception {
 
-        hashConfig = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.hashes");
+	    log.info(System.getProperties().toString());
+	    hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
         locations = new ConcurrentSkipListSet<>();
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
@@ -337,8 +340,8 @@ public class Rvn extends Thread {
     }
 
     public void registerPath(Path path) {
-        try {
-            if (Files.isDirectory(path)) {
+	    try {
+		    if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
                     stream.filter(child -> matchSafe(child)).forEach(this::registerPath);
                 }
@@ -357,7 +360,7 @@ public class Rvn extends Thread {
                 } else {
                     // logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
-            } else if (this.configFileNames.contains(path.getFileName().toString())) {
+            } else if (path.getFileName() != null && this.configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
             } else {
                 this.paths.add(path);
@@ -930,7 +933,7 @@ public class Rvn extends Thread {
                     }
                 }.apply(command)));
 
-        commandHandlers.add(new CommandHandler("+ {buildIndex}", "+ 1", "Show the output.", (command) -> new SimpleCommand("^\\+\\s([0-9]?)$") {
+        commandHandlers.add(new CommandHandler("+ {buildIndex}", "+ 1", "Show the output.", (command) -> new SimpleCommand("^+\\s([0-9]?)$") {
 
             public Boolean configure(Iterator<String> i) throws Exception {
                 if (!i.hasNext()) {
@@ -1041,6 +1044,7 @@ public class Rvn extends Thread {
                 .add(new CommandHandler("@", "@", "Reload the configuration file and rescan filesystem.", (command) -> {
                     if (command.equals("@")) {
                         try {
+                            this.commands.clear();
                             this.reloadConfiguration();
                         } catch (Exception ex) {
                             log.warning(ex.getMessage());
@@ -1920,10 +1924,10 @@ public class Rvn extends Thread {
                 }
                 return () -> null;
             } else {
-                tf = File.createTempFile("rvn-", "-" + nvv.toString().replace(':', '-') + ".out");
+                tf = File.createTempFile("rvn-", formalizeFileName("-" + nvv.toString()) + ".out");
 
                 if (reuseOutputMap.getOrDefault(nvv, reuseOutput)) {
-                    nf = new File(tf.getParentFile(), "rvn-" + nvv.toString().replace(':', '-') + "-" + commandIndex + ".out");
+                    nf = new File(tf.getParentFile(), formalizeFileName("rvn-" + nvv.toString() + "-" + commandIndex) + ".out");
                     if (!tf.renameTo(nf)) {
                         if (!nf.exists()) {
                             log.warning("rename file failed " + nf.getAbsolutePath());
@@ -1986,6 +1990,10 @@ public class Rvn extends Thread {
 
             return list.indexOf(command);
 
+        }
+
+        private String formalizeFileName(String string) {
+            return string.replace(':', '-').replace('.', '_');
         }
 
     }
@@ -2134,7 +2142,7 @@ public class Rvn extends Thread {
         log.fine(String.format("trying configuration %1$s", configURL));
 
         if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
-            config = Paths.get(System.getProperty("user.home") + File.separator + ".m2" + File.separator + "rvn.json");
+            config = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.json");
             if (!Files.exists(config)) {
                 log.info(String.format("%1$s doesn't exist, creating it from " + ANSI_WHITE + "%2$s" + ANSI_RESET,
                         config, configURL));
