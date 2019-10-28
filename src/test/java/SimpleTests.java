@@ -49,4 +49,14 @@ public class SimpleTests {
         assertEquals(expected, list);
 
     }
+
+    @Test
+    public void testCommandMatching() throws Exception {
+        Rvn rvn = new Rvn();
+        String project = "group:art:ver";
+        String match = "::";
+        boolean selected = rvn.matchNVVCommand(project, match);
+        assertTrue(selected);
+
+    }
 }

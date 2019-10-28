@@ -5,7 +5,7 @@ config = {
 	"mvnArgs": "-Dmaven.surefire.debug -DforkMode=never -DtrimStackTrace=false",
         "daemon": true,
         "buildCommands": [
-            "mvn -Dmaven.test.skip=true install",
+            "!mvn -Dmaven.test.skip=true install",
             "exit",
             "!mvn -Pgraal -Dmaven.test.skip=true" 
         ]

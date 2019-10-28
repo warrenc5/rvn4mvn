@@ -19,7 +19,7 @@ config = {
             ".*"
         ],
         "excludes": [
-            ".*\\.nexus.*", ".*\\.index$", ".*target$", ".*org\\/.*"
+            ".*\\.nexus.*", ".*\\.index$", ".*target$", ".*org\\/.*", ".*\\.git$"
         ]
     },
     "activeFiles": {

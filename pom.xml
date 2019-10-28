@@ -60,7 +60,7 @@
                             <arguments>
                                 <!-- <argument>-Xbootclasspath/p:${m2.home}</argument> -->
                             </arguments>
-                            <fork>true</fork>
+                            <fork>false</fork>
                             <systemProperties>
                                 <systemProperty>
                                     <key>rvn.config</key>

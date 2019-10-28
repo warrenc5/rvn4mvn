@@ -18,6 +18,7 @@ import static java.lang.Boolean.TRUE;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -197,9 +198,9 @@ public class Rvn extends Thread {
     private Instant thenStarted = null;
     private Path lastChangeFile;
     private final BuildIt buildIt;
-	private Path hashConfig;
+    private Path hashConfig;
 
-	private String userHome = System.getProperty("user.home");
+    private String userHome = System.getProperty("user.home");
 
     ScheduledThreadPoolExecutor executor;
 
@@ -239,12 +240,12 @@ public class Rvn extends Thread {
 
         buildIt = new BuildIt();
         buildIt.start();
-	}
+    }
 
     public void init() throws Exception {
 
-	    log.info(System.getProperties().toString());
-	    hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
+        log.info(System.getProperties().toString());
+        hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
         locations = new ConcurrentSkipListSet<>();
         keys = new HashSet<>(locations.size());
         keyPath = new HashMap<>();
@@ -340,8 +341,8 @@ public class Rvn extends Thread {
     }
 
     public void registerPath(Path path) {
-	    try {
-		    if (Files.isDirectory(path)) {
+        try {
+            if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
                     stream.filter(child -> matchSafe(child)).forEach(this::registerPath);
                 }
@@ -859,21 +860,33 @@ public class Rvn extends Thread {
 
     private String expandNVVRegex(String match) {
         StringBuilder bob = new StringBuilder();
+
         if (match.length() == 0) {
             match = ":";
         }
-        if (match.startsWith(":")) {
-            bob.insert(0, ".*");
+
+        for (int i = 0; i < match.length(); i++) {
+            Character c = match.charAt(i);
+            bob.append(c);
+            if (':' == c) {
+                if (i == 0) {
+                    bob.insert(i, ".*");
+
+                } else if (i == match.length() - 1) {
+                    bob.append(".*");
+                } else {
+                }
+                if (match.length() > i + 1 && c.equals(match.charAt(i + 1))) {
+                    bob.append(".*");
+                }
+            }
         }
-        bob.append(match);
-        if (match.endsWith(":")) {
-            bob.append(".*");
-        }
-        // logger.finest("matching " + match + " "+ bob.toString());
+
+        log.finest("matching " + match + " " + bob.toString());
         return bob.toString();
     }
 
-    private boolean matchNVVCommand(String project, String match) {
+    public boolean matchNVVCommand(String project, String match) {
         return project.matches(this.expandNVVRegex(match));
     }
 
@@ -1280,8 +1293,10 @@ public class Rvn extends Thread {
                         this.buildACommand(nvv, cmd);
                     }
                 } else {
+
                     AtomicInteger i = new AtomicInteger();
-                    commands.stream().forEach(s -> this.log.info(i.getAndIncrement() + " " + s));
+                    commands.stream()
+                            .forEach(s -> this.log.info(i.getAndIncrement() + " " + s));
                 }
 
                 return TRUE;
@@ -1483,9 +1498,21 @@ public class Rvn extends Thread {
         }
 
         commands.compute(projectKey, (key, oldValue) -> {
-            List<String> newList = new ArrayList<>(newCommandList);
+
+            List<String> newList = new ArrayList<>();
             if (oldValue != null) {
-                newList.addAll(oldValue);
+                newList.addAll(
+                        oldValue.stream()
+                                .filter(v -> oldValue.contains(v))
+                                .collect(Collectors.toList()));
+
+                List<String> newCommands = newCommandList.stream().filter(v -> !oldValue.contains(v))
+                        .collect(Collectors.toList());
+                Collections.reverse(newCommands);
+                newList.addAll(newCommands);
+            } else {
+                Collections.reverse(newCommandList);
+                newList.addAll(newCommandList);
             }
             return newList;
         });
@@ -1593,6 +1620,8 @@ public class Rvn extends Thread {
             } else if (kind == ENTRY_MODIFY) {
                 processPath(child);
             }
+        } catch (AccessDeniedException ex) {
+            log.log(Level.INFO, ex.getMessage());
         } catch (NoSuchFileException ex) {
             log.log(Level.INFO, ex.getMessage());
         } catch (Exception ex) {
@@ -2023,6 +2052,7 @@ public class Rvn extends Thread {
     private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
 
     private List<String> locateCommand(NVV nvv, Path path) {
+        log.info("locating commands " + nvv.toString());
         List<String> commandList = new ArrayList<>();
         if (lastChangeFile != null && iFinder.isJava(lastChangeFile)) {
             String test = null;
@@ -2066,7 +2096,7 @@ public class Rvn extends Thread {
     }
 
     private boolean commandMatch(String key, NVV nvv, Path path) {
-        return matchNVVCommand(nvv, key) || (path == null || path.toString().matches(key)) || nvv.toString().matches(key);
+        return matchNVVCommand(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
     }
 
     private boolean isPom(Path path) {
