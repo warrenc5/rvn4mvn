@@ -47,7 +47,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -74,6 +73,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -108,9 +108,9 @@ import org.xml.sax.ext.DefaultHandler2;
  */
 public class Rvn extends Thread {
 
-    // TODO:
     /**
      * *
+     * are commands for the project merge ` and `` command handlers. *
      * autoResume -rf module projects
      */
     private static Set<String> locations;
@@ -334,6 +334,62 @@ public class Rvn extends Thread {
         }
     }
 
+    public String removeDebug(String s) {
+        return s.replaceFirst("-Xrunjdwp:[0-9A-Za-z_,=]+", "");
+    }
+
+    private void toggleCommand(NVV nvv, String cmd) {
+        this.commands.entrySet().stream().filter(e -> this.matchNVV(nvv, e.getKey())).map(e -> e.getValue()).forEach(list
+                -> {
+            int i = list.indexOf(cmd);
+            if (i >= 0) {
+                list.set(i, this.toggleCommand(cmd));
+            }
+        });
+    }
+
+    private String toggleCommand(String cmd) {
+        if (cmd.startsWith("!")) {
+            return cmd.substring(1);
+        } else {
+            return "!" + cmd;
+        }
+    }
+
+    class SafeConsumer<T> implements Consumer<T> {
+
+        protected Consumer<T> f;
+
+        public SafeConsumer(Consumer<T> f) {
+            this.f = f;
+        }
+
+        @Override
+        public void accept(T t) {
+            try {
+                f.accept(t);
+            } catch (Throwable ex) {
+                log.log(Level.SEVERE, ex.getMessage(), ex);
+            }
+        }
+    }
+
+    class Safe<T, R> {
+
+        protected Function<T, R> f;
+
+        public Safe(Function<T, R> f) {
+            this.f = f;
+        }
+    }
+
+    /**
+     * class SafeFunction<T, R> extends Safe<T, R> implements Function<T, R> {
+     *
+     * @Override public R apply(T t) { try { return f.apply(t); } catch
+     * (Throwable ex) { log.log(Level.SEVERE, ex.getMessage(), ex); return null;
+     * } } }*
+     */
     public void registerPath(String uri) {
         Path dir = Paths.get(uri);
         log.info(String.format(ANSI_WHITE + "watching %1$s" + ANSI_RESET, dir));
@@ -886,11 +942,11 @@ public class Rvn extends Thread {
         return bob.toString();
     }
 
-    public boolean matchNVVCommand(String project, String match) {
+    public boolean matchNVV(String project, String match) {
         return project.matches(this.expandNVVRegex(match));
     }
 
-    private boolean matchNVVCommand(NVV project, String match) {
+    private boolean matchNVV(NVV project, String match) {
         return project.toString().matches(this.expandNVVRegex(match));
     }
 
@@ -1106,27 +1162,11 @@ public class Rvn extends Thread {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("`", "`[:test:|#]",
-                "List known project(s) matching coordinate or path expression.", (command) -> {
-                    if (command.startsWith("`")) {
-                        updateIndex();
-                        log.info(index.stream()
-                                .filter(i -> matchNVVCommand(i, command.substring(1))
-                                || this.buildArtifact.get(i).toString().matches(command.substring(1)))
-                                .map(i -> String.format(
-                                ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
-                                buildIndex.indexOf(i), i, buildArtifact.get(i)))
-                                .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
-                        return TRUE;
-                    }
-                    return FALSE;
-                }));
-
         commandHandlers.add(new CommandHandler("=", "=:test:", "List build commands for project", (command) -> {
             if (command.startsWith("=")) {
 
                 log.info(this.commands.keySet().stream()
-                        .filter(i -> matchNVVCommand(i, command.length() == 1 ? ".*" : command.substring(1)))
+                        .filter(i -> matchNVV(i, command.length() == 1 ? ".*" : command.substring(1)))
                         .map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
                         this.commands.get(i).stream()
                                 .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
@@ -1141,7 +1181,7 @@ public class Rvn extends Thread {
                 "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
                 (command) -> {
                     if (isNVV(command)) {
-                        this.buildArtifact.keySet().stream().filter(n -> matchNVVCommand(n, command)).forEach(n -> {
+                        this.buildArtifact.keySet().stream().filter(n -> matchNVV(n, command)).forEach(n -> {
                             lastNvv = this.processChange(n);
                         });
                         return TRUE;
@@ -1258,8 +1298,31 @@ public class Rvn extends Thread {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("[:num:]+``?[:num:,\\-]+", "100`l,3-5", "Builds the given project with the commands. To rebuild last use ``,  To list commands omit the second argument.", (command) -> {
-            Pattern re = Pattern.compile("([0-9]+)`([0-9,\\-]*)");
+        commandHandlers.add(new CommandHandler("`", "`[:test:|#]",
+                "List known project(s) matching coordinate or path expression.", (command) -> {
+                    if (command.startsWith("`") && !command.equals("``")) {
+                        updateIndex();
+                        String nvvMatch = command.substring(1);
+                        if (nvvMatch.isBlank()) {
+                            nvvMatch = ".*";
+                        }
+                        final String match = nvvMatch;
+
+                        List<NVV> selected = index.stream()
+                                .filter(nvv -> matchNVV(nvv, match)).collect(Collectors.toList());
+                        //|| this.buildArtifact.get(nvv).toString().matches(match))
+
+                        log.info(selected.stream().map(i -> String.format(
+                                ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
+                                buildIndex.indexOf(i), i, buildArtifact.get(i)))
+                                .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
+                        return TRUE;
+                    }
+                    return FALSE;
+                }));
+
+        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[`:num:,\\-]+", "100`l,3-5", "Builds the given project with the commands. To rebuild last use ``,  To list commands omit the second argument.", (command) -> {
+            Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
 
             Matcher matcher = re.matcher(command);
             if (matcher.matches()) {
@@ -1275,14 +1338,14 @@ public class Rvn extends Thread {
                 Integer cmdIndex = null;
                 List<String> commands = this.locateCommand(nvv, null);
 
-                if (matcher.groupCount() == 2 && !matcher.group(2).isBlank()) {
+                if (matcher.groupCount() == 3 && !matcher.group(3).isBlank()) {
 
                     String cmd = null;
 
-                    if ("`".equals(matcher.group(2))) {
+                    if ("`".equals(matcher.group(3))) {
                         cmd = this.previousCmdIdx.get(index);
                     } else {
-                        cmd = matcher.group(2);
+                        cmd = matcher.group(3);
                         this.previousCmdIdx.put(index, cmd);
                     }
 
@@ -1290,7 +1353,11 @@ public class Rvn extends Thread {
                     for (Integer cmdIdx : rangeIdx) {
                         cmd = commands.get(cmdIdx);
                         log.info(cmd);
-                        this.buildACommand(nvv, cmd);
+                        if ("!".equals(matcher.group(2))) {
+                            this.toggleCommand(nvv, cmd);
+                        } else {
+                            this.buildACommand(nvv, cmd);
+                        }
                     }
                 } else {
 
@@ -1494,7 +1561,7 @@ public class Rvn extends Thread {
 
     private void addCommand(String projectKey, List<String> newCommandList) {
         if (log.isLoggable(Level.FINEST)) {
-            log.finest("==" + projectKey + " " + newCommandList.toString());
+            log.finest("==" + projectKey + " " + newCommandList.toString() + " " + newCommandList.toString());
         }
 
         commands.compute(projectKey, (key, oldValue) -> {
@@ -1508,10 +1575,8 @@ public class Rvn extends Thread {
 
                 List<String> newCommands = newCommandList.stream().filter(v -> !oldValue.contains(v))
                         .collect(Collectors.toList());
-                Collections.reverse(newCommands);
                 newList.addAll(newCommands);
             } else {
-                Collections.reverse(newCommandList);
                 newList.addAll(newCommandList);
             }
             return newList;
@@ -1833,7 +1898,9 @@ public class Rvn extends Thread {
                         pb.environment().putAll(System.getenv());
 
                         if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
-                            pb.environment().put("maven.opts", mvnOpts);
+                            pb.environment().put("MAVEN_OPTS", mvnOpts);
+                        } else {
+                            pb.environment().put("MAVEN_OPTS", removeDebug(pb.environment().get("MAVEN_OPTS")));
                         }
 
                         if (log.isLoggable(Level.FINEST)) {
@@ -2096,7 +2163,7 @@ public class Rvn extends Thread {
     }
 
     private boolean commandMatch(String key, NVV nvv, Path path) {
-        return matchNVVCommand(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
+        return matchNVV(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
     }
 
     private boolean isPom(Path path) {
@@ -2284,8 +2351,8 @@ public class Rvn extends Thread {
         if (result.hasMember(key = "buildCommands")) {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             if (v.isArray()) {
-                v.values().stream().collect(Collectors.toCollection(LinkedList::new)).descendingIterator()
-                        .forEachRemaining(e -> this.addCommand(oNvv.get().toString(), optionalArray(e)));
+                List<String> commands = v.values().stream().map(e -> e.toString()).collect(Collectors.toList());
+                this.addCommand(oNvv.get().toString(), commands);
             } else {
                 v.entrySet().forEach(e -> this.addCommand(e.getKey(), optionalArray(e.getValue())));
             }

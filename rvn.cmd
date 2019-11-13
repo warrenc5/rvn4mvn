@@ -3,7 +3,7 @@ set JAVA_OPTS=--illegal-access=permit -Xms32m -Xmx128m
 set JAVA_HOME=C:\work\appz\jdk-12.0.2
 set M2_HOME=C:\work\appz\apache-maven-3.5.0\
 set PATH=%M2_HOME%\bin;%JAVA_HOME%\bin;C:\Windows\System32
-set MAVEN_OPTS=-Xms32m -Xmx256m  -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009
+set MAVEN_OPTS=-Xms32m -Xmx256m -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009
 pushd %~dp0
 set script_dir=%CD%
 popd

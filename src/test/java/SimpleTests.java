@@ -55,8 +55,18 @@ public class SimpleTests {
         Rvn rvn = new Rvn();
         String project = "group:art:ver";
         String match = "::";
-        boolean selected = rvn.matchNVVCommand(project, match);
+        boolean selected = rvn.matchNVV(project, match);
         assertTrue(selected);
 
+    }
+
+    @Test
+    public void testMavenOpts() throws Exception {
+
+        Rvn rvn = new Rvn();
+
+        String s = "-Xms32m -Xmx256m -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009 -Xdebug";
+        s = rvn.removeDebug(s);
+        assertEquals("-Xms32m -Xmx256m  -Xdebug", s);
     }
 }
