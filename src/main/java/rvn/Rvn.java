@@ -485,24 +485,34 @@ public class Rvn extends Thread {
     public void run() {
         scan();
 
-        /**
-         * logger.info(toBuild.toString()); toBuild.forEach(nvv -> {
-         * this.buildDeps(nvv); });
-         *
-         */
+        Map<Path, WatchEvent.Kind> events = new HashMap<>();
+        long lastEvent = System.currentTimeMillis();
+
         while (this.isAlive()) {
             Thread.yield();
-            log.fine(String.format("waiting.."));
+
+            if (System.currentTimeMillis() - lastEvent >= 400 && events.size() > 0) {
+                System.err.print('.');
+                events.entrySet().forEach(e -> processEvent(e.getKey(), e.getValue()));
+                events.clear();
+            }
+            //log.fine(String.format("waiting.."));
+
             WatchKey key;
+
             try {
-                key = watcher.take();
+                key = watcher.poll(500, TimeUnit.MILLISECONDS);
+                if (key == null) {
+                    continue;
+                }
+                lastEvent = System.currentTimeMillis();
             } catch (InterruptedException x) {
-                return;
+                continue;
             }
 
             try {
                 for (WatchEvent<?> event : key.pollEvents()) {
-                    processEvent(event, key);
+                    events.put(this.resolve(event, key), event.kind());
                 }
 
             } catch (Throwable ex) {
@@ -1643,25 +1653,29 @@ public class Rvn extends Thread {
         }
     }
 
-    private void processEvent(WatchEvent<?> event, WatchKey key) {
+    private Path resolve(WatchEvent<?> event, WatchKey key) {
+        WatchEvent.Kind<?> kind = event.kind();
+
+        if (kind == OVERFLOW) {
+            return null;
+        }
+
+        WatchEvent<Path> ev = (WatchEvent<Path>) event;
+        Path filename = ev.context();
+
+        if (!keyPath.containsKey(key)) {
+            return null;
+        }
+        Path child = keyPath.get(key).resolve(filename);
+        return child;
+    }
+
+    private void processEvent(Path child, WatchEvent.Kind<?> kind) {
         try {
-            WatchEvent.Kind<?> kind = event.kind();
-
-            if (kind == OVERFLOW) {
-                return;
-            }
-
-            WatchEvent<Path> ev = (WatchEvent<Path>) event;
-            Path filename = ev.context();
-
-            if (!keyPath.containsKey(key)) {
-                return;
-            }
-            Path child = keyPath.get(key).resolve(filename);
 
             if (child.equals(config)) {
                 try {
-                    log.info("config changed " + filename);
+                    log.info("config changed " + child);
                     this.reloadConfiguration();
                 } catch (Throwable ex) {
                     log.log(Level.SEVERE, ex.getMessage(), ex);
@@ -1669,7 +1683,9 @@ public class Rvn extends Thread {
                 return;
             }
 
-            log.fine(String.format("kind %1$s %2$s %3$d", ev.kind(), child, key.hashCode()));
+            if (log.isLoggable(Level.FINE)) {
+                log.fine(String.format("kind %1$s %2$s ", kind, child));
+            }
 
             if (kind == ENTRY_DELETE) {
                 Optional<WatchKey> cancelKey = keyPath.entrySet().stream()
