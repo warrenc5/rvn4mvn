@@ -1498,6 +1498,7 @@ public class Rvn extends Thread {
             } catch (RuntimeException x) {
                 log.log(Level.INFO, "rtx - cancelled future " + x.getMessage(), x);
             } finally {
+                log.info("removed " + nvv);
                 this.futureMap.remove(nvv);
             }
         }
@@ -1514,12 +1515,16 @@ public class Rvn extends Thread {
             return;
         }
 
+        p.destroy();
+        if (java9) {
+            p.descendants().forEach(ph -> ph.destroy());
+        }
+
+        p.destroyForcibly();
         if (java9) {
             p.descendants().forEach(ph -> ph.destroyForcibly());
-            p.destroyForcibly();
-        } else {
-            p.destroyForcibly();
         }
+        log.info("destroyed " + p.info());
     }
 
     private void buildIndex() {
@@ -1887,97 +1892,101 @@ public class Rvn extends Thread {
             final List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
             final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
-            Supplier<Boolean> task = () -> {
+            Supplier<Boolean> task;
+            task = new Supplier<Boolean>() {
+                @Override
+                public Boolean get() {
+                    int exit = 0;
+                    Callable<Path> archive = null;
 
-                int exit = 0;
-                Callable<Path> archive = null;
+                    Instant then = Instant.now();
+                    Process p = null;
+                    boolean timedOut = false;
 
-                Instant then = Instant.now();
-                Process p = null;
-                boolean timedOut = false;
-
-                try {
-                    Rvn.this.thenStarted = Instant.now();
-                    if (daemon) {
-                        log.info("running in process " + commandFinal);
-                        archive = redirectOutput(nvv, commandIndex, null);
-                        exit = Launcher.mainWithExitCode(filteredArgs);
-                    } else {
-
-                        log.info("spawning new process " + commandFinal);
-                        ProcessBuilder pb = new ProcessBuilder()
-                                .directory(dir.getParent().toFile())
-                                .command(filteredArgs);
-
-                        archive = redirectOutput(nvv, commandIndex, pb);
-
-                        pb.environment().putAll(System.getenv());
-
-                        if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
-                            pb.environment().put("MAVEN_OPTS", mvnOpts);
+                    try {
+                        Rvn.this.thenStarted = Instant.now();
+                        if (daemon) {
+                            log.info("running in process " + commandFinal);
+                            archive = redirectOutput(nvv, commandIndex, null);
+                            exit = Launcher.mainWithExitCode(filteredArgs);
                         } else {
-                            pb.environment().put("MAVEN_OPTS", removeDebug(pb.environment().get("MAVEN_OPTS")));
-                        }
 
-                        if (log.isLoggable(Level.FINEST)) {
-                            log.finest(pb.environment().entrySet().stream().map(e -> e.toString()).collect(Collectors.joining("\r\n", ",", "\r\n")));
-                        }
+                            log.info("spawning new process " + commandFinal);
+                            ProcessBuilder pb = new ProcessBuilder()
+                                    .directory(dir.getParent().toFile())
+                                    .command(filteredArgs);
 
-                        if (javaHome != null && !javaHome.trim().isEmpty()) {
-                            if (Files.exists(Paths.get(javaHome))) {
-                                pb.environment().put("JAVA_HOME", javaHome);
-                                String path = "Path";
-                                pb.environment().put(path, new StringBuilder(javaHome).append(File.separatorChar).append("bin").append(File.pathSeparatorChar).append(pb.environment().getOrDefault(path, "")).toString()); //FIXME:  maybe microsoft specific
-                                if (log.isLoggable(Level.FINE)) {
-                                    log.fine(pb.environment().entrySet().stream().filter(e -> e.getKey().equals(path)).map(e -> e.toString()).collect(Collectors.joining(",", ",", ",")));
-                                }
+                            archive = redirectOutput(nvv, commandIndex, pb);
+
+                            pb.environment().putAll(System.getenv());
+
+                            if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
+                                pb.environment().put("MAVEN_OPTS", mvnOpts);
                             } else {
-                                log.warning(String.format("JAVA_HOME %1$s does not exist, defaulting", javaHome));
+                                pb.environment().put("MAVEN_OPTS", removeDebug(pb.environment().get("MAVEN_OPTS")));
+                            }
+
+                            if (log.isLoggable(Level.FINEST)) {
+                                log.finest(pb.environment().entrySet().stream().map(e -> e.toString()).collect(Collectors.joining("\r\n", ",", "\r\n")));
+                            }
+
+                            if (javaHome != null && !javaHome.trim().isEmpty()) {
+                                if (Files.exists(Paths.get(javaHome))) {
+                                    pb.environment().put("JAVA_HOME", javaHome);
+                                    String path = "Path";
+                                    pb.environment().put(path, new StringBuilder(javaHome).append(File.separatorChar).append("bin").append(File.pathSeparatorChar).append(pb.environment().getOrDefault(path, "")).toString()); //FIXME:  maybe microsoft specific
+                                    if (log.isLoggable(Level.FINE)) {
+                                        log.fine(pb.environment().entrySet().stream().filter(e -> e.getKey().equals(path)).map(e -> e.toString()).collect(Collectors.joining(",", ",", ",")));
+                                    }
+                                } else {
+                                    log.warning(String.format("JAVA_HOME %1$s does not exist, defaulting", javaHome));
+                                }
+                            }
+
+                            p = pb.start();
+
+                            processMap.put(dir, p);
+                            CompletableFuture<Process> processFuture = p.onExit();
+
+                            //lock.unlock();
+                            if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS)) {
+                                timedOut = true;
+                                stopBuild(nvv);
                             }
                         }
+                    } catch (InterruptedException ex) {
+                        stopProcess(p);
+                        result.completeExceptionally(ex);
+                    } catch (Exception ex) {
+                        log.log(Level.SEVERE, "build failed " + ex.getMessage(), ex);
+                        result.completeExceptionally(ex);
+                    } finally {
+                        Path output = archiveOutput(nvv, archive);
 
-                        p = pb.start();
-
-                        processMap.put(dir, p);
-
-                        //lock.unlock();
-                        if (!p.waitFor(timeoutMap.getOrDefault(nvv, timeout).toMillis(), TimeUnit.MILLISECONDS)) {
-                            timedOut = true;
-                            stopBuild(nvv);
+                        if (daemon) {
+                            resetOut();
+                        } else {
+                            processMap.remove(dir);
+                            exit = p.exitValue();
                         }
+
+                        log.info(String.format(
+                                ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED)
+                                + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
+                                + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s",
+                                nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : ""));
+
+                        if (exit != 0) {
+                            result.complete(Boolean.FALSE);
+                        } else {
+                            result.complete(Boolean.TRUE);
+                            failMap.remove(nvv);
+                        }
+
+                        Rvn.this.thenFinished = Instant.now();
                     }
-                } catch (InterruptedException ex) {
-                    stopProcess(p);
-                    result.completeExceptionally(ex);
-                } catch (Exception ex) {
-                    log.log(Level.SEVERE, "build failed " + ex.getMessage(), ex);
-                    result.completeExceptionally(ex);
-                } finally {
-                    Path output = archiveOutput(nvv, archive);
-
-                    if (daemon) {
-                        resetOut();
-                    } else {
-                        processMap.remove(dir);
-                        exit = p.exitValue();
-                    }
-
-                    log.info(String.format(
-                            ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED)
-                            + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
-                            + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s",
-                            nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : ""));
-
-                    if (exit != 0) {
-                        result.complete(Boolean.FALSE);
-                    } else {
-                        result.complete(Boolean.TRUE);
-                        failMap.remove(nvv);
-                    }
-
-                    Rvn.this.thenFinished = Instant.now();
+                    return FALSE;
                 }
-                return FALSE;
             };
 
             return result.completeAsync(task, executor);
