@@ -1,3 +1,5 @@
+//TODO
+// create aggregate pom for known projects to resolve deps
 package rvn;
 
 import java.io.File;
@@ -171,6 +173,7 @@ public class Rvn extends Thread {
     private Map<NVV, Duration> batchWaitMap;
     private Map<NVV, Duration> timeoutMap;
     private Map<NVV, Boolean> interruptMap;
+    private Map<NVV, String> settingsMap;
     private Map<NVV, String> mvnOptsMap;
     private Map<NVV, String> javaHomeMap;
     private Map<NVV, String> mvnArgsMap;
@@ -204,6 +207,7 @@ public class Rvn extends Thread {
     private String userHome = System.getProperty("user.home");
 
     ScheduledThreadPoolExecutor executor;
+    private String settings;
 
     public Rvn() throws Exception {
         ThreadFactory tFactory = new ThreadFactory() {
@@ -281,6 +285,7 @@ public class Rvn extends Thread {
         batchWaitMap = new HashMap<>();
         timeoutMap = new HashMap<>();
         interruptMap = new HashMap<>();
+        settingsMap = new HashMap<>();
         mvnOptsMap = new HashMap<>();
         javaHomeMap = new HashMap<>();
         mvnArgsMap = new HashMap<>();
@@ -485,8 +490,8 @@ public class Rvn extends Thread {
         this.calculateToBuild();
 
         this.iFinder = new ImportFinder(this.paths);
-        log.info(String.format(ANSI_WHITE + "watching %1$s builds, %2$s projects, %3$s keys - all in %4$s" + ANSI_RESET,
-                buildPaths.size(), projects.size(), keys.size(), duration.toString()));
+        log.info(String.format(ANSI_WHITE + "watching %2$s projects, %1$s builds, %5s are out of date,  %3$s keys - all in %4$s" + ANSI_RESET,
+                buildPaths.size(), projects.size(), keys.size(), duration.toString(), toBuild.size()));
     }
 
     @Override
@@ -788,9 +793,12 @@ public class Rvn extends Thread {
                 "changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_YELLOW + " %3$s" + ANSI_RESET,
                 nvv.toString(), path, LocalTime.now().toString()));
 
+        if (path != null)
         try {
             hashes.put(path.toString(), this.toSHA1(path));
             writeHashes();
+        } catch (java.nio.charset.MalformedInputException ex) {
+            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
         } catch (IOException ex) {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
         }
@@ -920,7 +928,15 @@ public class Rvn extends Thread {
         this.lastBuild.entrySet().forEach(e -> {
             NVV nvv = e.getKey();
             if (e.getValue().compareTo(this.lastUpdate.getOrDefault(nvv, FileTime.from(Instant.MIN))) < 0) {
-                log.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
+                if (!toBuild.contains(nvv)) {
+                    toBuild.add(nvv);
+                }
+            }
+        });
+
+        this.lastUpdate.entrySet().forEach(e -> {
+            NVV nvv = e.getKey();
+            if (!this.lastBuild.containsKey(nvv)) {
                 if (!toBuild.contains(nvv)) {
                     toBuild.add(nvv);
                 }
@@ -934,6 +950,9 @@ public class Rvn extends Thread {
             }
         });
 
+        this.toBuild.forEach(nvv -> {
+            log.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
+        });
     }
 
     private void qBuild(NVV nvv, NVV next) {
@@ -1941,6 +1960,15 @@ public class Rvn extends Thread {
             final String commandFinal = String.format(command, projectPath);
             String[] args = commandFinal.split(" ");
             final List<String> filtered = Arrays.stream(args).filter(s -> s.trim().length() > 0).collect(Collectors.toList());
+
+            String settings = settingsMap.getOrDefault(nvv, Rvn.this.settings);
+
+            log.info(settings);
+            if (settings != null) {
+                filtered.add(1, "-s");
+                filtered.add(2, settings);
+            }
+
             final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
             Supplier<Boolean> task;
@@ -1962,12 +1990,12 @@ public class Rvn extends Thread {
                     try {
                         Rvn.this.thenStarted = Instant.now();
                         if (daemon) {
-                            log.info("running in process " + commandFinal);
+                            log.info("running in process " + filtered.toString());
                             archive = redirectOutput(nvv, commandIndex, null);
                             exit = Launcher.mainWithExitCode(filteredArgs);
                         } else {
 
-                            log.info("spawning new process " + commandFinal);
+                            log.info("spawning new process " + filtered.toString());
                             ProcessBuilder pb = new ProcessBuilder()
                                     .directory(projectPath.getParent().toFile())
                                     .command(filteredArgs);
@@ -2237,8 +2265,11 @@ public class Rvn extends Thread {
             }
         }
 
-        commandList = commands.entrySet().stream().filter(e -> commandMatch(e.getKey(), nvv, path))
-                .flatMap(e -> e.getValue().stream()).collect(Collectors.toList());
+        commandList = commands.entrySet().stream().
+                filter(e -> !e.getKey().equals("::"))
+                .filter(e -> commandMatch(e.getKey(), nvv, path))
+                .flatMap(e -> e.getValue().stream())
+                .collect(Collectors.toList());
 
         if (commandList.isEmpty()) {
             if (commands.containsKey("::")) {
@@ -2365,6 +2396,7 @@ public class Rvn extends Thread {
             this.mvnCmdMap.remove(oNvv.get());
             this.javaHomeMap.remove(oNvv.get());
             this.interruptMap.remove(oNvv.get());
+            this.settingsMap.remove(oNvv.get());
             this.batchWaitMap.remove(oNvv.get());
             this.reuseOutputMap.remove(oNvv.get());
             this.commands.remove(oNvv.get().toString());
@@ -2550,6 +2582,17 @@ public class Rvn extends Thread {
                 interruptMap.put(oNvv.get(), v);
             } else {
                 interrupt = v;
+            }
+            log.fine(key + " " + v);
+        }
+
+        if (result.hasMember(key = "settings")) {
+            String v = (String) result.get(key);
+
+            if (oNvv.isPresent()) {
+                settingsMap.put(oNvv.get(), v);
+            } else {
+                settings = v;
             }
             log.fine(key + " " + v);
         }

@@ -57,7 +57,7 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                         return q.stream();
                     });
         }).distinct().forEach(e -> oq.add(e));
-        log.fine("q->" + q.toString() + " " + q.size());
+        log.info("q->" + q.toString() + " " + q.size());
         this.clear();
 
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {

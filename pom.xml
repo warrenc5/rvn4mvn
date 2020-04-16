@@ -125,6 +125,7 @@
                         <artifactId>animal-sniffer-maven-plugin</artifactId>
                         <version>1.18</version>
                         <configuration>
+                            <skip>true</skip>
                             <signature>
                                 <groupId>org.codehaus.mojo.signature</groupId>
                                 <artifactId>java18</artifactId>
@@ -150,10 +151,7 @@
                     <plugin>
                         <groupId>com.oracle.substratevm</groupId>
                         <artifactId>native-image-maven-plugin</artifactId>
-                        <!--
-                        <version>19.2.0-dev-b01</version>
-                        -->
-                        <version>19.1.0</version>
+                        <version>19.2.1</version>
                         <executions>
                             <execution>
                                 <goals>
@@ -163,7 +161,7 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:ResourceConfigurationResources=resources.json -H:JNIConfigurationResources=jni.json</buildArgs>
+                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:ResourceConfigurationResources=resources.json -H:JNIConfigurationResources=jni.json --language:js --report-unsupported-elements-at-runtime</buildArgs>
                             <imageName>rvn</imageName>
                         </configuration>
                     </plugin>
@@ -172,14 +170,17 @@
                         <artifactId>exec-maven-plugin</artifactId>
                         <executions>
                             <execution>
-                                <phase>integration-test</phase>
+                                <phase>none</phase>
+                                <!--
+                                            <phase>integration-test</phase>
+                                -->
                                 <goals>
                                     <goal>exec</goal>
                                 </goals>
                             </execution>
                         </executions>
                         <configuration>
-                            <executable>target/rvn.rvn</executable>
+                            <executable>target/rvn</executable>
                             <systemProperties>
                                 <systemProperty>
                                     <key>rvn.config</key>
@@ -321,6 +322,11 @@
             <groupId>org.apache.maven</groupId>
             <artifactId>maven-core</artifactId>
             <version>3.6.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-classworlds</artifactId>
+            <version>2.6.0</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
