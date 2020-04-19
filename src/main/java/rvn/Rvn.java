@@ -64,6 +64,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
@@ -120,10 +121,12 @@ public class Rvn extends Thread {
     private Set<WatchKey> keys;
     private Map<WatchKey, Path> keyPath;
     private Map<NVV, Path> buildArtifact;
+    private Map<NVV, Path> repoArtifact;
     private List<NVV> buildIndex;
     private List<NVV> index;
     private List<NVV> toBuild;
     private Map<Path, NVV> buildPaths;
+    private Map<Path, NVV> repoPaths;
     private Map<NVV, FileTime> lastBuild;
     private Map<NVV, FileTime> lastUpdate;
     private Map<NVV, Set<NVV>> projects;
@@ -257,10 +260,11 @@ public class Rvn extends Thread {
         projects = new HashMap<>();
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
+        repoArtifact = new LinkedHashMap<>();
         buildIndex = new ArrayList<>();
         agProjects = new HashSet<>();
         buildPaths = new LinkedHashMap<>();
-        toBuild = new ArrayList<>();
+        toBuild = new CopyOnWriteArrayList<>();
         lastBuild = new HashMap<>();
         lastUpdate = new HashMap<>();
         processMap = new LinkedHashMap<>();
@@ -369,6 +373,53 @@ public class Rvn extends Thread {
         }
     }
 
+    private boolean compareHashes(Path bPath, Path rPath) {
+
+        if (bPath == null || rPath == null) {
+            return false;
+        }
+
+        String bHash = this.hashes.get(bPath.toString());
+        String rHash = this.hashes.get(rPath.toString());
+
+        if (bHash == null || rHash == null) {
+            log.info("no hash");
+            return false;
+        }
+        return bHash.equals(rHash);
+    }
+
+    private String expandNVVMatch(String s) {
+
+        StringBuilder bob = new StringBuilder();
+        if (!s.startsWith("^")) {
+            bob.append("^");
+        }
+        if (s.startsWith(":")) {
+            bob.append("^.*");
+        }
+        bob.append(s);
+        if (s.endsWith(":")) {
+            bob.append(".*");
+        }
+
+        if (!s.endsWith("$")) {
+            bob.append("$");
+        }
+
+        return bob.toString();
+    }
+
+    private boolean needsBuild(NVV nvv) {
+        Optional<Path> bPath = this.buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+        Optional<Path> rPath = this.repoArtifact.entrySet().stream().filter(e -> e.getKey().equals(nvv)).map(e -> e.getValue()).findAny();
+        if (bPath.isEmpty() || rPath.isEmpty()) {
+            log.fine(nvv.toString() + " " + bPath + " " + rPath);
+            return true;
+        }
+        return !compareHashes(bPath.get(), rPath.get());
+    }
+
     class SafeConsumer<T> implements Consumer<T> {
 
         protected Consumer<T> f;
@@ -403,6 +454,27 @@ public class Rvn extends Thread {
      * (Throwable ex) { log.log(Level.SEVERE, ex.getMessage(), ex); return null;
      * } } }*
      */
+    public void findConfiguration(String uri) {
+        Path dir = Paths.get(uri);
+        log.fine(String.format(ANSI_WHITE + "searching %1$s for config" + ANSI_RESET, dir));
+        findConfiguration(dir);
+    }
+
+    public void findConfiguration(Path path) {
+        try {
+            if (Files.isDirectory(path)) {
+                try (Stream<Path> stream = Files.list(path)) {
+                    stream.filter(child -> matchSafe(child)).forEach(this::findConfiguration);
+                }
+            } else if (path.getFileName() != null && this.configFileNames.contains(path.getFileName().toString())) {
+                this.loadConfiguration(path);
+            }
+        } catch (IOException ex) {
+            log.info(
+                    String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
+        }
+    }
+
     public void registerPath(String uri) {
         Path dir = Paths.get(uri);
         log.info(String.format(ANSI_WHITE + "watching %1$s" + ANSI_RESET, dir));
@@ -413,10 +485,11 @@ public class Rvn extends Thread {
         try {
             if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
-                    stream.filter(child -> matchSafe(child)).forEach(this::registerPath);
+                    stream.sorted().filter(child -> matchSafe(child)).forEach(this::registerPath);
                 }
             } else if (path.toFile().toString().endsWith(".pom")) {
                 Optional<FileTime> lastest = watchRecursively(path.getParent().getParent()); // watch all versions
+
                 Optional<NVV> oNvv = processPom(path);
                 if (oNvv.isPresent() && lastest.isPresent()) {
                     this.lastBuild.put(oNvv.get(), lastest.get());
@@ -430,8 +503,6 @@ public class Rvn extends Thread {
                 } else {
                     // logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
-            } else if (path.getFileName() != null && this.configFileNames.contains(path.getFileName().toString())) {
-                this.loadConfiguration(path);
             } else {
                 this.paths.add(path);
             }
@@ -477,8 +548,8 @@ public class Rvn extends Thread {
     }
 
     public void scan() {
+        locations.stream().forEach(this::findConfiguration);
         locations.stream().forEach(this::registerPath);
-        Duration duration = Duration.between(thenFinished, Instant.now());
 
         log.fine("buildSet :" + buildPaths.toString().replace(',', '\n'));
         ArrayList watchSet;
@@ -487,11 +558,23 @@ public class Rvn extends Thread {
         log.fine("watchSet :" + watchSet.toString().replace(',', '\n'));
 
         this.buildIndex();
+
+        try {
+            this.writeHashes();
+        } catch (IOException ex) {
+            log.severe(ex.getMessage());
+        }
         this.calculateToBuild();
 
         this.iFinder = new ImportFinder(this.paths);
-        log.info(String.format(ANSI_WHITE + "watching %2$s projects, %1$s builds, %5s are out of date,  %3$s keys - all in %4$s" + ANSI_RESET,
-                buildPaths.size(), projects.size(), keys.size(), duration.toString(), toBuild.size()));
+
+        watchSummary();
+    }
+
+    public void watchSummary() {
+        Duration duration = Duration.between(thenFinished, Instant.now());
+        log.info(String.format(ANSI_WHITE + "watching %1$s projects, %2$s builds, %3$s are out of date,  %4$s keys - all in %5$s" + ANSI_RESET,
+                projects.size(), buildPaths.size(), toBuild.size(), keys.size(), duration.toString()));
     }
 
     @Override
@@ -656,9 +739,13 @@ public class Rvn extends Thread {
         Document xmlDocument = loadPom(path);
 
         NVV nvv = nvvFrom(path);
+        NVV parentNvv = nvvParent(nvv, xmlDocument);
+
         if (!matchNVV(nvv)) {
+            log.finest("ignoring " + nvv.toString() + "  " + path.toString());
             return Optional.empty();
         }
+        log.finest("selected " + nvv.toString() + "  " + path.toString());
 
         if (path.endsWith("pom.xml")) {
             Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
@@ -683,8 +770,13 @@ public class Rvn extends Thread {
             }
 
             this.buildArtifact.put(nvv, path);
+            //log.info(nvv.toString() + " " + path.toString());
 
             buildPaths.put(path, nvv);
+        } else if (path.toString().endsWith(".pom")) {
+            log.finest(nvv.toString() + " ++++++++ " + path.toString());
+            this.repoArtifact.put(nvv, path);
+        } else {
         }
 
         String newHash = null;
@@ -701,8 +793,6 @@ public class Rvn extends Thread {
                 Spliterator.ORDERED | Spliterator.NONNULL);
         Set<NVV> deps = StreamSupport.stream(splt, true).map(n -> this.processDependency(n, nvv)).filter(t -> t != null).filter(this::matchNVV)
                 .collect(Collectors.toSet());
-
-        NVV parentNvv = nvvParent(nvv, xmlDocument);
 
         if (!Objects.isNull(parentNvv)) {
             parent.put(nvv, parentNvv);
@@ -745,10 +835,10 @@ public class Rvn extends Thread {
             Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
             parentNvv = nvvFrom(parent);
 
-            if (nvv.vendor.isEmpty()) {
+            if (nvv.vendor.isBlank()) {
                 nvv.vendor = parentNvv.vendor;
             }
-            if (nvv.version.isEmpty()) {
+            if (nvv.version.isBlank()) {
                 nvv.version = parentNvv.version;
             }
         } catch (Exception e) {
@@ -775,8 +865,8 @@ public class Rvn extends Thread {
     XPath xPath = XPathFactory.newInstance().newXPath();
 
     private NVV nvvFrom(Node context) throws XPathExpressionException {
-        return new NVV(xPath.compile("artifactId").evaluate(context), xPath.compile("groupId").evaluate(context),
-                xPath.compile("version").evaluate(context));
+        return new NVV(xPath.compile("artifactId").evaluate(context).trim(), xPath.compile("groupId").evaluate(context).trim(),
+                xPath.compile("version").evaluate(context).trim());
     }
 
     private void processChangeImmediatley(NVV nvv) {
@@ -793,14 +883,15 @@ public class Rvn extends Thread {
                 "changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_YELLOW + " %3$s" + ANSI_RESET,
                 nvv.toString(), path, LocalTime.now().toString()));
 
-        if (path != null)
-        try {
-            hashes.put(path.toString(), this.toSHA1(path));
-            writeHashes();
-        } catch (java.nio.charset.MalformedInputException ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
-        } catch (IOException ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+        if (path != null) {
+            try {
+                hashes.put(path.toString(), this.toSHA1(path));
+                writeHashes();
+            } catch (java.nio.charset.MalformedInputException ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+            } catch (IOException ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+            }
         }
 
         this.scheduleFuture(nvv, immediate);
@@ -834,7 +925,7 @@ public class Rvn extends Thread {
             ScheduledFuture<?> future = executor.schedule(() -> {
                 log.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
                 try {
-                    Rvn.this.qBuild(nvv, nvv);
+                    Rvn.this.buildDeps(nvv);
                 } catch (Exception e) {
                     log.severe("error " + e);
                 } finally {
@@ -847,30 +938,36 @@ public class Rvn extends Thread {
         });
     }
 
-    private void buildDeps(NVV nvv) {
+    private synchronized void buildDeps(NVV nvv) {
         try {
-            //FIXME:
             NVV pNvv = parent.get(nvv);
-            this.projects.entrySet().stream().filter(
-                    e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv))
-            ).filter(e -> e.getValue().stream().filter(
-                    nvv2 -> pNvv == null || (pNvv != null && !nvv2.equals(pNvv))
-            ).filter(
-                    nvv2 -> nvv2.equalsVersion(nvv)
-            ).findAny().isPresent()
-            ).map(e -> e.getKey())
+            this.projects.entrySet().stream()
+                    .filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
+                    .flatMap(e -> e.getValue().stream())
+                    .filter(nvv3 -> this.buildArtifact.containsKey(nvv3))
+                    .filter(nvv4 -> this.needsBuild(nvv4))
                     .distinct()
                     .forEach(
-                            nvv2 -> qBuild(nvv, nvv2)
+                            nvv2 -> {
+                                qBuild(nvv2, nvv);
+                            }
                     );
+
+            /**
+             * ).filter(e -> e.getValue().stream().filter( nvv2 -> pNvv == null
+             * || (pNvv != null && !nvv2.equals(pNvv)) ).filter( nvv2 ->
+             * nvv2.equals(nvv) ).findAny().isPresent() ).map(e -> e.getKey())
+             * .distinct() .forEach( nvv2 -> { qBuild(nvv, nvv2); } ); *
+             */
         } catch (RuntimeException x) {
             log.warning(String.format("%1$s %2$s", nvv.toString(), x.getMessage()));
         }
     }
 
     private boolean matchFiles(Path path) throws IOException {
-        return this.isConfigFile(path) || matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !matchFileExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        return this.isConfigFile(path)
+                || matchFileIncludes.isEmpty() || (matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
+                || !matchFileExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent()); // FIXME: absolutely
     }
 
     private boolean matchDirectories(Path path) {
@@ -879,9 +976,10 @@ public class Rvn extends Thread {
     }
 
     private boolean matchNVV(NVV nvv) {
-        return matchArtifactIncludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent() // FIXME:
-                // absolutely
-                && !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent(); // FIXME:
+        return matchArtifactIncludes.isEmpty() || (matchArtifactIncludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent() // FIXME:
+                );
+        // absolutely
+        //&& !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent()); // FIXME:
         // absolutely
     }
 
@@ -899,7 +997,7 @@ public class Rvn extends Thread {
     private boolean matchSafe(Path path, String s) throws PatternSyntaxException {
         boolean matches = path.toAbsolutePath().toString().matches(s);
         if (matches) {
-            log.fine("matches path " + s);
+            log.finest("matches path " + path.toString() + " " + s);
         }
         return matches;
     }
@@ -916,27 +1014,21 @@ public class Rvn extends Thread {
     }
 
     private boolean matchSafe(NVV nvv, String s) throws PatternSyntaxException {
-        boolean matches = nvv.toString().matches(s);
+        boolean matches = nvv.toString().matches(s = expandNVVMatch(s));
+
         if (matches) {
-            log.fine("matches artifact " + s);
+            log.fine("matches artifact " + s + " " + nvv.toString());
+        } else {
+            log.finest("doesn't match artifact " + s + " " + nvv.toString());
         }
         return matches;
     }
 
     private void calculateToBuild() {
 
-        this.lastBuild.entrySet().forEach(e -> {
-            NVV nvv = e.getKey();
-            if (e.getValue().compareTo(this.lastUpdate.getOrDefault(nvv, FileTime.from(Instant.MIN))) < 0) {
-                if (!toBuild.contains(nvv)) {
-                    toBuild.add(nvv);
-                }
-            }
-        });
-
-        this.lastUpdate.entrySet().forEach(e -> {
-            NVV nvv = e.getKey();
-            if (!this.lastBuild.containsKey(nvv)) {
+        this.buildPaths.entrySet().stream().forEach(e -> {
+            NVV nvv = e.getValue();
+            if (needsBuild(nvv)) {
                 if (!toBuild.contains(nvv)) {
                     toBuild.add(nvv);
                 }
@@ -951,7 +1043,7 @@ public class Rvn extends Thread {
         });
 
         this.toBuild.forEach(nvv -> {
-            log.info(String.format("consider building " + ANSI_CYAN + " %s " + ANSI_RESET, nvv.toString()));
+            log.info(String.format("consider building " + ANSI_GREEN + "%1$d " + ANSI_CYAN + " %2$s " + ANSI_RESET, buildIndex.indexOf(nvv), nvv.toString()));
         });
     }
 
@@ -973,10 +1065,6 @@ public class Rvn extends Thread {
 
         if (!q.contains(edge)) {
             q.insert(edge);
-
-            // if (!next.equals(nvv)) {
-            buildDeps(next);
-            // }
         }
         log.finest(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
     }
@@ -1396,6 +1484,7 @@ public class Rvn extends Thread {
                         ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
                         buildIndex.indexOf(i), i, buildArtifact.get(i)))
                                 .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
+                        watchSummary();
                         return TRUE;
                     }
                     return FALSE;
@@ -1599,8 +1688,12 @@ public class Rvn extends Thread {
 
     private void buildIndex() {
         List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
+
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
-        index.stream().filter(nvv -> !buildIndex.contains(nvv)).forEach(nvv -> buildIndex.add(nvv));
+
+        index.stream()
+                .filter(nvv -> !buildIndex.contains(nvv))
+                .forEach(nvv -> buildIndex.add(nvv));
     }
 
     private void updateIndex() {
@@ -1900,6 +1993,12 @@ public class Rvn extends Thread {
                 } else {
                     result.thenCombineAsync(future, (b, v) -> b && v);
                 }
+                result.exceptionally(x -> {
+                    synchronized (q) {
+                        q.clear();
+                    }
+                    return true;
+                });
 
             }
 
@@ -2072,6 +2171,7 @@ public class Rvn extends Thread {
                             throw new RuntimeException("exit code " + exit);//Boolean.FALSE);
                         } else {
                             result.complete(Boolean.TRUE);
+                            toBuild.remove(nvv);
                             failMap.remove(nvv);
                         }
 
@@ -2089,9 +2189,10 @@ public class Rvn extends Thread {
         }
 
         private void doBuildTimeout(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
+            Future future = null;
             try {
                 //lock.unlock();
-                Future future = doBuild(nvv, commandLocator);
+                future = doBuild(nvv, commandLocator);
                 if (future == null) {
                     throw new RuntimeException("no result, add some buildCommands to .rvn.json config file");
                 }
@@ -2119,7 +2220,6 @@ public class Rvn extends Thread {
                         .subList(0, ex.getStackTrace().length).toString());
                 log.log(Level.SEVERE, ex.getMessage(), ex);
 
-                q.clear();
             } finally {
                 resetOut();
             }

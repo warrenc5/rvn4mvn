@@ -1,13 +1,16 @@
 package rvn;
 
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.Objects;
+import org.apache.maven.artifact.versioning.ComparableVersion;
 
-public class NVV {
+public class NVV implements Comparable<NVV> {
 
     public String name;
     public String vendor;
     public String version;
+    public ComparableVersion cVersion;
     public Path path;
 
     public NVV(String name, String vendor, String version) {
@@ -19,6 +22,7 @@ public class NVV {
         this.vendor = vendor;
         this.version = version;
         this.path = path;
+        this.cVersion = new ComparableVersion(version);
     }
 
     public NVV(String name, String vendor) {
@@ -55,11 +59,21 @@ public class NVV {
         return hash;
     }
 
-    public boolean equalsVersion(Object obj) {
-
+    public boolean equalsExact(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null) {
+            return false;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
         final NVV other = (NVV) obj;
-
-        if (!Objects.equals(this, other)) {
+        if (!Objects.equals(this.name, other.name)) {
+            return false;
+        }
+        if (!Objects.equals(this.vendor, other.vendor)) {
             return false;
         }
         if (!Objects.equals(this.version, other.version)) {
@@ -87,6 +101,17 @@ public class NVV {
             return false;
         }
         return true;
+    }
+
+    private String getLongName() {
+        return vendor + name;
+    }
+
+    @Override
+    public int compareTo(NVV other) {
+        return Comparator.comparing(NVV::getLongName)
+                .thenComparing((NVV nvv1, NVV nvv2) -> nvv1.cVersion.compareTo(nvv2.cVersion))
+                .compare(this, other);
     }
 
 }

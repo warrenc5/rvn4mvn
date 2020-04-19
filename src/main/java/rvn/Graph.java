@@ -4,12 +4,13 @@ import java.util.ArrayDeque;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
@@ -21,7 +22,7 @@ import java.util.stream.StreamSupport;
  *
  * @author wozza
  */
-public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
+public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
 
     private Logger log = Logger.getLogger(Graph.class.getName());
     Deque<NVV> q = new ArrayDeque<>();
@@ -50,13 +51,21 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
 
     public Stream<NVV> paths(NVV nvv) {
 
-        this.entrySet().stream().flatMap(e -> {
+        List<NVV> collect = this.entrySet().stream().flatMap(e -> {
             return e.getValue().stream().filter(n -> (e.getKey().equals(nvv) | nvv == null))
                     .flatMap(v -> {
                         findAncestor(e.getKey(), v);
                         return q.stream();
                     });
-        }).distinct().forEach(e -> oq.add(e));
+        }).distinct().collect(Collectors.toList());
+        collect.iterator().forEachRemaining(e -> {
+            synchronized (oq) {
+                if (!oq.contains(e)) {
+                    oq.add(e);
+                }
+            }
+        });
+
         log.info("q->" + q.toString() + " " + q.size());
         this.clear();
 
@@ -67,7 +76,9 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                 NVV element = null;
                 try {
                     Thread.yield();
-                    element = oq.poll(10, TimeUnit.MILLISECONDS);
+                    synchronized (oq) {
+                        element = oq.poll(10, TimeUnit.MILLISECONDS);
+                    }
                 } catch (InterruptedException ex) {
                 }
                 if (element == null) {
@@ -100,8 +111,8 @@ public class Graph<T> extends LinkedHashMap<NVV, Set<NVV>> {
                         return;
                     }
 
-                    if (!(n1.equals(e.nvv1) && n2.equals(e.nvv2))) {
-                        findAncestor(n2, e.nvv1);
+            if (!(n1.equals(e.nvv1) || n2.equals(e.nvv2))) {
+                findAncestor(n2, e.nvv1);
                     }
 
                     q.remove(e.nvv2);
