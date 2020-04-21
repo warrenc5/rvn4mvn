@@ -477,11 +477,13 @@ public class Rvn extends Thread {
     private void resolveVersion() {
         Stream.concat(
                 Stream.concat(
-                        this.projects.keySet().stream(),
                         Stream.concat(
-                                this.buildIndex.stream(),
-                                this.index.stream())
-                ), this.toBuild.stream())
+                                this.projects.keySet().stream(),
+                                Stream.concat(
+                                        this.buildIndex.stream(),
+                                        this.index.stream())
+                        ), this.toBuild.stream()),
+                this.projects.values().stream().flatMap(s -> s.stream()))
                 .forEach(nvv -> {
                     resolveVersion(nvv);
                 });
