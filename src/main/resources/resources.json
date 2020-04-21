@@ -1,0 +1,10 @@
+{
+    "resources": [
+        {
+            "pattern": "logging.properties"
+        },
+        {
+            "pattern": "rvn.json"
+        }
+    ]
+}

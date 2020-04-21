@@ -2,6 +2,7 @@ package rvn;
 
 import java.util.ArrayDeque;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -33,9 +34,13 @@ public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
     }
 
     @Override
-    public void clear() {
+    public synchronized void clear() {
         super.clear();
         q.clear();
+    }
+
+    public void truncate() {
+        oq.clear();
     }
 
     public Graph<T> insert(Edge edge) {
@@ -57,7 +62,9 @@ public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
                         findAncestor(e.getKey(), v);
                         return q.stream();
                     });
-        }).distinct().collect(Collectors.toList());
+        }).collect(Collectors.toList());
+
+        Collections.reverse(collect);
         collect.iterator().forEachRemaining(e -> {
             synchronized (oq) {
                 if (!oq.contains(e)) {
@@ -67,12 +74,12 @@ public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
         });
 
         log.info("q->" + q.toString() + " " + q.size());
-        this.clear();
 
+        this.clear();
         Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
             @Override
             public boolean tryAdvance(Consumer<? super NVV> action) {
-                log.info("bq->" + oq.toString().replace(',', '\n') + " " + oq.size() + " remaining");
+                log.info("bq->" + oq.toString().replace(',', '\n') + " " + Rvn.ANSI_YELLOW + oq.size() + " remaining " + Rvn.ANSI_RESET);
                 NVV element = null;
                 try {
                     Thread.yield();
@@ -90,6 +97,7 @@ public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
             }
 
         };
+
         return StreamSupport.stream(spliterator, false);
     }
 

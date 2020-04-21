@@ -2,6 +2,7 @@
 // create aggregate pom for known projects to resolve deps
 package rvn;
 
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -86,6 +87,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toList;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import javax.script.ScriptEngine;
@@ -98,9 +100,14 @@ import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
+import jdk.internal.org.jline.reader.LineReader;
+import jdk.internal.org.jline.reader.LineReaderBuilder;
+import jdk.internal.org.jline.terminal.Terminal;
+import jdk.internal.org.jline.terminal.TerminalBuilder;
 import jdk.nashorn.api.scripting.ScriptObjectMirror;
 import org.codehaus.plexus.classworlds.launcher.Launcher;
 import org.w3c.dom.Document;
+import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
@@ -138,6 +145,7 @@ public class Rvn extends Thread {
     private Map<Integer, String> previousCmdIdx;
 
     private Map<String, List<String>> commands;
+    private Map<NVV, Map<String, String>> properties;
 
     private Set<NVV> agProjects;
     private List<String> matchFileIncludes;
@@ -194,7 +202,7 @@ public class Rvn extends Thread {
         Rvn rvn = new Rvn();
         rvn.locations.addAll(Arrays.asList(args));
         rvn.start();
-        rvn.processStdIn();
+        rvn.processStdInOld();
         System.out.println(String.format("************** Exited ************************"));
     }
 
@@ -271,6 +279,7 @@ public class Rvn extends Thread {
         previousCmdIdx = new HashMap<>();
         failMap = new LinkedHashMap<>();
         commands = new LinkedHashMap<>();
+        properties = new HashMap<>();
         hashes = new HashMap<>();
         configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
         pomFileNames = new ArrayList<>(Arrays.asList(new String[]{"pom.xml", "pom.yml", ".*.pom$"}));
@@ -317,16 +326,60 @@ public class Rvn extends Thread {
 
     }
 
-    private void processStdIn() {
+    private void processStdIn() throws IOException {
+        final Terminal terminal = TerminalBuilder.builder()
+                .system(true)
+                .build();
+        final LineReader lineReader
+                = LineReaderBuilder.builder()
+                        .terminal(terminal)
+                        //.completer(new MyCompleter())
+                        //.highlighter(new MyHighlighter())
+                        //.parser(new MyParser())
+                        .build();
+
+        CloseableIterator<String> iterator = new CloseableIterator<String>() {
+            String line;
+
+            public boolean hasNext() {
+                return (line = lineReader.readLine()) != null;
+            }
+
+            public String next() {
+                log.info(line);
+                return line;
+            }
+
+            @Override
+            public void close() throws IOException {
+                terminal.close();
+            }
+        };
+
+        this.processStdIn(iterator);
+    }
+
+    private void processStdInOld() throws IOException {
         Scanner scanner = new Scanner(System.in);
+
         scanner.useDelimiter(System.getProperty("line.separator"));
-        Spliterator<String> splt = Spliterators.spliterator(scanner, Long.MAX_VALUE,
+        this.processStdIn(scanner);
+    }
+
+    private void processStdIn(Iterator<String> iterator) throws IOException {
+        Spliterator<String> splt = Spliterators.spliterator(iterator, Long.MAX_VALUE,
                 Spliterator.ORDERED | Spliterator.NONNULL);
 
         while (this.isAlive()) {
             Thread.yield();
             try {
-                StreamSupport.stream(splt, false).onClose(scanner::close).forEach(this::processCommand);
+                StreamSupport.stream(splt, false).onClose(() -> {
+                    try {
+                        ((Closeable) iterator).close();
+                    } catch (IOException ex) {
+                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }).forEach(this::processCommand);
             } catch (Exception x) {
                 log.info(x.getMessage() + " in cmd handler");
                 log.log(Level.WARNING, x.getMessage(), x);
@@ -407,6 +460,7 @@ public class Rvn extends Thread {
             bob.append("$");
         }
 
+        log.finest(s + "->" + bob.toString());
         return bob.toString();
     }
 
@@ -418,6 +472,95 @@ public class Rvn extends Thread {
             return true;
         }
         return !compareHashes(bPath.get(), rPath.get());
+    }
+
+    private void resolveVersion() {
+        Stream.concat(
+                Stream.concat(
+                        this.projects.keySet().stream(),
+                        Stream.concat(
+                                this.buildIndex.stream(),
+                                this.index.stream())
+                ), this.toBuild.stream())
+                .forEach(nvv -> {
+                    resolveVersion(nvv);
+                });
+    }
+
+    private void resolveVersion(NVV nvv) {
+        NVV parentNvv = this.parent.get(nvv);
+
+        if (parentNvv == null) {
+            return;
+        }
+
+        this.resolveVersion(parentNvv);
+
+        if (nvv.vendor.isBlank()) {
+            nvv.vendor = parentNvv.vendor;
+        }
+        if (nvv.version.isBlank()) {
+            nvv.version = parentNvv.version;
+        } else if (nvv.version.equalsIgnoreCase("${pom.version}") || nvv.version.equalsIgnoreCase("${project.version}")) {
+            nvv.version = parentNvv.version;
+        } else if (nvv.version.startsWith("${")) {
+            nvv.version = interpolate(nvv, nvv.version);
+        }
+
+        nvv.resolveVersion(nvv.version);
+
+    }
+
+    private String interpolate(NVV nvv, String value) {
+        Pattern p = Pattern.compile("\\$\\{(.*)\\}");
+        Map<String, String> props = null;
+        props = propertiesFrom(nvv);
+        Matcher matcher = p.matcher(nvv.version);
+        if (matcher.matches()) {
+            String name = matcher.group(1);
+            String newValue = null;
+            if (props.containsKey(name)) {
+                newValue = props.get(name);
+                return newValue;
+            } else {
+                NVV parentNvv = this.parent.get(nvv);
+
+                if (parentNvv != null) {
+                    newValue = this.interpolate(parentNvv, value);
+                    if (newValue != null) {
+                        return newValue;
+                    }
+                }
+            }
+        }
+        log.warning("not resolved " + nvv + " " + value);
+        return value;
+    }
+
+    private boolean matchNVV(NVV nvv, Path path) {
+        try {
+            return matchNVV(nvv) && matchFiles(path);
+        } catch (IOException ex) {
+            log.warning(ex.getMessage());
+            return false;
+        }
+    }
+
+    private Stream<NVV> projectDepends(NVV nvv) {
+        return projects.entrySet().stream()
+                .filter(e
+                        -> e.getValue().contains(nvv)
+                ).map(e -> e.getKey());
+    }
+
+    private void rehash() {
+
+        this.buildArtifact = new LinkedHashMap<>(this.buildArtifact);
+        this.repoArtifact = new LinkedHashMap<>(this.repoArtifact);
+        this.parent = new LinkedHashMap<>(this.parent);
+    }
+
+    private static abstract class CloseableIterator<T> implements Iterator<T>, Closeable {
     }
 
     class SafeConsumer<T> implements Consumer<T> {
@@ -564,6 +707,9 @@ public class Rvn extends Thread {
         } catch (IOException ex) {
             log.severe(ex.getMessage());
         }
+        this.resolveVersion();
+
+        rehash();
         this.calculateToBuild();
 
         this.iFinder = new ImportFinder(this.paths);
@@ -682,7 +828,7 @@ public class Rvn extends Thread {
             this.nvvParent(nvv, pom);
 
             log.info(String.format("nvv: %1$s %2$s", path, nvv));
-            if (matchNVV(nvv)) {
+            if (matchNVV(nvv, path)) {
                 //this.buildDeps(nvv);
             }
             return;
@@ -741,7 +887,9 @@ public class Rvn extends Thread {
         NVV nvv = nvvFrom(path);
         NVV parentNvv = nvvParent(nvv, xmlDocument);
 
-        if (!matchNVV(nvv)) {
+        this.resolveVersion(nvv);
+
+        if (!matchNVV(nvv, path)) {
             log.finest("ignoring " + nvv.toString() + "  " + path.toString());
             return Optional.empty();
         }
@@ -769,10 +917,9 @@ public class Rvn extends Thread {
                 }
             }
 
+            log.fine("found build " + nvv.toString() + " " + path.toString());
             this.buildArtifact.put(nvv, path);
-            //log.info(nvv.toString() + " " + path.toString());
-
-            buildPaths.put(path, nvv);
+            this.buildPaths.put(path, nvv);
         } else if (path.toString().endsWith(".pom")) {
             log.finest(nvv.toString() + " ++++++++ " + path.toString());
             this.repoArtifact.put(nvv, path);
@@ -791,7 +938,10 @@ public class Rvn extends Thread {
 
         Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
                 Spliterator.ORDERED | Spliterator.NONNULL);
-        Set<NVV> deps = StreamSupport.stream(splt, true).map(n -> this.processDependency(n, nvv)).filter(t -> t != null).filter(this::matchNVV)
+
+        Set<NVV> deps = StreamSupport.stream(splt, true)
+                .map(n -> this.processDependency(n, nvv)).filter(t -> t != null)
+                .filter(nvv2 -> this.matchNVV(nvv2, path))
                 .collect(Collectors.toSet());
 
         if (!Objects.isNull(parentNvv)) {
@@ -804,6 +954,9 @@ public class Rvn extends Thread {
             log.fine(String.format("aggregator project %1$s", nvv.toString()));
             agProjects.add(nvv);
         }
+
+        Map<String, String> props = this.propertiesFrom(xmlDocument);
+        this.properties.put(nvv, props);
 
         log.fine(String.format("tracking %1$s %2$s", nvv.toString(), path));
         projects.put(nvv, deps);
@@ -835,12 +988,6 @@ public class Rvn extends Thread {
             Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
             parentNvv = nvvFrom(parent);
 
-            if (nvv.vendor.isBlank()) {
-                nvv.vendor = parentNvv.vendor;
-            }
-            if (nvv.version.isBlank()) {
-                nvv.version = parentNvv.version;
-            }
         } catch (Exception e) {
         }
         log.fine(String.format("%1$s with parent %2$s", nvv.toString(), parentNvv));
@@ -860,6 +1007,60 @@ public class Rvn extends Thread {
         NVV nvv = nvvFrom(project);
 
         return nvv;
+    }
+
+    private Node projectFrom(Path path)
+            throws XPathExpressionException, SAXException, IOException, ParserConfigurationException {
+        Document xmlDocument = loadPom(path);
+        return projectFrom(xmlDocument);
+    }
+
+    private Node projectFrom(Document xmlDocument) throws XPathExpressionException {
+        Node project = (Node) xPath.compile("/project").evaluate(xmlDocument, XPathConstants.NODE);
+        return project;
+    }
+
+    //TODO load NODE From
+    private Map<String, String> propertiesFrom(NVV nvv) {
+
+        if (this.properties.containsKey(nvv)) {
+            return this.properties.get(nvv);
+        }
+
+        //TODO get properties from repoArtifacts too
+        Path pom = this.buildArtifact.getOrDefault(nvv, this.repoArtifact.get(nvv));
+
+        if (pom != null) {
+
+            try {
+                return propertiesFrom(pom); //TODO move to resolve
+            } catch (Exception ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+
+        return Collections.EMPTY_MAP;
+    }
+
+    private Map<String, String> propertiesFrom(Path path)
+            throws XPathExpressionException, SAXException, IOException, ParserConfigurationException {
+        return propertiesFrom(projectFrom(path));
+    }
+
+    private Map<String, String> propertiesFrom(Node context) throws XPathExpressionException {
+        Map<String, String> result = new HashMap<>();
+        NodeList propSet = (NodeList) xPath.compile("//properties/node()").evaluate(context, XPathConstants.NODESET);
+
+        for (int i = 0; i < propSet.getLength(); i++) {
+            if (Node.ELEMENT_NODE == propSet.item(i).getNodeType()) {
+                String name = propSet.item(i).getNodeName();
+                String value = ((Element) propSet.item(i)).getTextContent();
+                result.put(name, value);
+            }
+        }
+
+        //log.info(result.toString());
+        return result;
     }
 
     XPath xPath = XPathFactory.newInstance().newXPath();
@@ -941,17 +1142,25 @@ public class Rvn extends Thread {
     private synchronized void buildDeps(NVV nvv) {
         try {
             NVV pNvv = parent.get(nvv);
-            this.projects.entrySet().stream()
-                    .filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
-                    .flatMap(e -> e.getValue().stream())
+            if (pNvv != null) {
+                buildDeps(pNvv);
+            }
+            List<NVV> deps = this.projects.entrySet().stream()
+                    //.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
+                    .flatMap(e -> projectDepends(nvv))
                     .filter(nvv3 -> this.buildArtifact.containsKey(nvv3))
                     .filter(nvv4 -> this.needsBuild(nvv4))
-                    .distinct()
-                    .forEach(
-                            nvv2 -> {
-                                qBuild(nvv2, nvv);
-                            }
-                    );
+                    .distinct().collect(toList());
+            if (deps.isEmpty()) {
+                qBuild(nvv, nvv);
+            } else {
+
+                deps.forEach(
+                        nvv2 -> {
+                            qBuild(nvv2, nvv);
+                        }
+                );
+            }
 
             /**
              * ).filter(e -> e.getValue().stream().filter( nvv2 -> pNvv == null
@@ -960,7 +1169,8 @@ public class Rvn extends Thread {
              * .distinct() .forEach( nvv2 -> { qBuild(nvv, nvv2); } ); *
              */
         } catch (RuntimeException x) {
-            log.warning(String.format("%1$s %2$s", nvv.toString(), x.getMessage()));
+            log.log(Level.WARNING, String.format("%1$s %2$s", nvv.toString(), x.getMessage()), x);
+
         }
     }
 
@@ -1051,7 +1261,10 @@ public class Rvn extends Thread {
 
         Path dir = buildArtifact.get(nvv);
 
-        if (!isPom(dir)) {
+        if (dir == null) {
+            log.warning("no build path " + nvv);
+            return;
+        } else if (!isPom(dir)) {
             return;
         } else {
             try {
@@ -1476,13 +1689,14 @@ public class Rvn extends Thread {
                         }
                         final String match = nvvMatch;
 
-                        List<NVV> selected = index.stream()
+                        List<NVV> selected = buildIndex.stream()
                                 .filter(nvv -> matchNVV(nvv, match)).collect(Collectors.toList());
-                        //|| this.buildArtifact.get(nvv).toString().matches(match))
 
-                        log.info(selected.stream().map(i -> String.format(
-                        ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
-                        buildIndex.indexOf(i), i, buildArtifact.get(i)))
+                        log.info(selected.stream()
+                                .sorted((nvv1, nvv2) -> Integer.compare(this.buildIndex.indexOf(nvv1), this.buildIndex.indexOf(nvv2)))
+                                .map(i -> String.format(((this.toBuild.indexOf(i)) >= 0 ? (ANSI_RED + "*") : " ")
+                                + ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
+                                buildIndex.indexOf(i), i, buildArtifact.get(i)))
                                 .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
                         watchSummary();
                         return TRUE;
@@ -1689,7 +1903,7 @@ public class Rvn extends Thread {
     private void buildIndex() {
         List<NVV> index = this.buildArtifact.keySet().stream().collect(Collectors.toList());
 
-        Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
+        Collections.sort(index, (NVV o1, NVV o2) -> o1.compareTo(o2));
 
         index.stream()
                 .filter(nvv -> !buildIndex.contains(nvv))
@@ -1838,7 +2052,7 @@ public class Rvn extends Thread {
         return child;
     }
 
-    private void processEvent(Path child, WatchEvent.Kind<?> kind) {
+    private synchronized void processEvent(Path child, WatchEvent.Kind<?> kind) {
         try {
 
             if (child.equals(config)) {
@@ -1884,6 +2098,8 @@ public class Rvn extends Thread {
         } else {
             this.futureMap.keySet().forEach(nvv -> this.stopBuild(nvv));
         }
+
+        q.truncate();
         //FIXME: executor.shutdownNow();
         //executor = new ScheduledThreadPoolExecutor(1);
     }
@@ -1995,7 +2211,7 @@ public class Rvn extends Thread {
                 }
                 result.exceptionally(x -> {
                     synchronized (q) {
-                        q.clear();
+                        q.truncate();
                     }
                     return true;
                 });
@@ -2162,13 +2378,21 @@ public class Rvn extends Thread {
                         }
 
                         log.info(String.format(
-                                ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED)
+                                ANSI_GREEN + "%6$d " + ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED)
                                 + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET
                                 + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s",
-                                nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : ""));
+                                nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : "", buildIndex.indexOf(nvv)));
 
                         if (exit != 0) {
+                            if (output != null) {
+                                try {
+                                    Rvn.this.writeFileToStdout(output);
+                                } catch (IOException ex) {
+                                    Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                                }
+                            }
                             throw new RuntimeException("exit code " + exit);//Boolean.FALSE);
+
                         } else {
                             result.complete(Boolean.TRUE);
                             toBuild.remove(nvv);
@@ -2202,20 +2426,22 @@ public class Rvn extends Thread {
                 Thread.yield();
 
             } catch (CancellationException x) {
-                log.warning(ANSI_RED + "Cancelled" + ANSI_RESET + " " + nvv.toString());
+                log.warning(ANSI_GREEN + " " + Rvn.this.buildIndex.indexOf(nvv) + " " + ANSI_RED + "Cancelled" + ANSI_RESET + " " + nvv.toString()
+                );
             } catch (CompletionException ex) {
                 if (ex.getCause() instanceof InterruptedException) {
-                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " interrupted");
+                    log.warning(ANSI_GREEN + " " + Rvn.this.buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " interrupted");
                 } else if (ex.getCause() instanceof TimeoutException) {
-                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " timedout");
+                    log.warning(ANSI_GREEN + " " + Rvn.this.buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " timedout"
+                    );
                 } else {
-                    log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " completed with " + ex.getClass().getSimpleName()
+                    log.warning(ANSI_GREEN + " " + Rvn.this.buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " completed with " + ex.getClass().getSimpleName()
                             + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace())
                             .subList(0, ex.getStackTrace().length).toString());
                     log.log(Level.SEVERE, ex.getMessage(), ex);
                 }
             } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
-                log.warning(ANSI_RED + "ERROR" + ANSI_RESET + " waiting for build " + nvv.toString() + " because " + ex.getClass().getSimpleName()
+                log.warning(ANSI_GREEN + " " + Rvn.this.buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " waiting for build " + nvv.toString() + " because " + ex.getClass().getSimpleName()
                         + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace())
                         .subList(0, ex.getStackTrace().length).toString());
                 log.log(Level.SEVERE, ex.getMessage(), ex);
@@ -2306,7 +2532,11 @@ public class Rvn extends Thread {
         }
 
         private String formalizeFileName(String string) {
-            return string.replace(':', '-').replace('.', '_');
+            return sanitizeOutName(string.replace(':', '-').replace('.', '_'));
+        }
+
+        private String sanitizeOutName(String nvvName) {
+            return nvvName.replaceAll("[\\{\\}\\.\\$]", "");
         }
 
     }
@@ -2443,7 +2673,7 @@ public class Rvn extends Thread {
         }
     }
 
-    public String toSHA1(Path value) throws IOException {
+    public synchronized String toSHA1(Path value) throws IOException {
         md.update(Long.toString(Files.size(value)).getBytes());
         Files.lines(value).forEach(s -> md.update(s.getBytes()));
         return new String(md.digest());

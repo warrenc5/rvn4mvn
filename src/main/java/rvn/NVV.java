@@ -114,4 +114,9 @@ public class NVV implements Comparable<NVV> {
                 .compare(this, other);
     }
 
+    void resolveVersion(String version) {
+        this.version = version;
+        this.cVersion = new ComparableVersion(version);
+    }
+
 }
