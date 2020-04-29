@@ -688,7 +688,7 @@ public class Rvn extends Thread {
             keyPath.put(key, dir);
             log.fine(String.format("watching %1$s %2$d", dir, key.hashCode()));
         } catch (IOException x) {
-            System.err.println(x);
+            System.err.println("watch " + x.getMessage());
         }
     }
 
@@ -1272,7 +1272,7 @@ public class Rvn extends Thread {
             try {
                 processPom(dir);
             } catch (SAXException | XPathExpressionException | IOException | ParserConfigurationException ex) {
-                log.warning(ex.getMessage());
+                log.warning("process "+ ex.getMessage());
             }
         }
 
@@ -1417,7 +1417,7 @@ public class Rvn extends Thread {
                         writeFileToStdout(last);
                     }
                 } catch (IOException ex) {
-                    log.info(ex.getMessage());
+                    log.info("show " + ex.getMessage());
                 } finally {
                     if (last != null) {
                         it.remove();
@@ -1433,7 +1433,7 @@ public class Rvn extends Thread {
                 try {
                     writeFileToStdout(Rvn.this.lastFile);
                 } catch (IOException ex) {
-                    log.info(ex.getMessage());
+                    log.info("show last " + ex.getMessage());
                 }
                 return TRUE;
             }
@@ -1486,7 +1486,7 @@ public class Rvn extends Thread {
                 try {
                     writeFileToStdout(fail);
                 } catch (IOException ex) {
-                    log.warning(ex.getMessage());
+                    log.warning("show fail " + ex.getMessage());
                 }
                 return TRUE;
             }
@@ -1499,7 +1499,7 @@ public class Rvn extends Thread {
                             this.commands.clear();
                             this.reloadConfiguration();
                         } catch (Exception ex) {
-                            log.warning(ex.getMessage());
+                            log.warning("reload " + ex.getMessage());
                         }
                         return TRUE;
                     }
@@ -1537,7 +1537,7 @@ public class Rvn extends Thread {
                     try {
                         this.processPath(k, true);
                     } catch (Exception ex) {
-                        log.severe(ex.getMessage());
+                        log.severe("build " + ex.getMessage());
                     }
                 });
                 return TRUE;
@@ -1580,7 +1580,7 @@ public class Rvn extends Thread {
                             this.lastChangeFile = p;
                             this.processPath(p, true);
                         } catch (Exception ex) {
-                            log.warning(ex.getMessage());
+                            log.warning("path " + ex.getMessage());
                         }
                         return p;
                     }).iterator().hasNext();
@@ -1592,7 +1592,7 @@ public class Rvn extends Thread {
                     try {
                         Rvn.this.writeFileToStdout(Paths.get(command).toFile());
                     } catch (Exception ex) {
-                        log.warning(ex.getMessage());
+                        log.warning("path out " +  ex.getMessage());
 
                     }
                 }
@@ -1607,7 +1607,7 @@ public class Rvn extends Thread {
                         try {
                             Rvn.this.writeFileToStdout(e.getValue());
                         } catch (Exception ex) {
-                            log.warning(ex.getMessage());
+                            log.warning("dump first "+  ex.getMessage());
                         }
                     }
                 });
@@ -1822,7 +1822,7 @@ public class Rvn extends Thread {
             oos.writeObject(this.hashes);
             fos.flush();
         } catch (IOException x) {
-            log.info(x.getMessage());
+            log.info("write hashes "+ x.getMessage());
         }
     }
 
@@ -1834,9 +1834,9 @@ public class Rvn extends Thread {
                 ObjectInputStream ois = new ObjectInputStream(fis);
                 this.hashes = (Map<String, String>) ois.readObject();
             } catch (IOException x) {
-                log.warning(x.getMessage());
+                log.warning("read hashes "+ x.getMessage());
             } catch (ClassNotFoundException x) {
-                log.warning(x.getMessage());
+                log.warning("cnf " + x.getMessage());
             }
         } else {
             log.info("no hashes found " + hashConfig.toAbsolutePath());
@@ -2493,7 +2493,7 @@ public class Rvn extends Thread {
                 Path np = Path.of(nf.toURI());
                 return () -> {
                     logs.add(tp);
-                    if (!Files.isSameFile(tp, np)) {
+                    if (Files.exists(np) && Files.exists(tp) && !Files.isSameFile(tp, np)) {
                         Files.copy(np, tp, StandardCopyOption.REPLACE_EXISTING);
                     }
 
@@ -2586,7 +2586,7 @@ public class Rvn extends Thread {
                                 .map(p -> p.toString().substring(0, p.toString().length() - 5))
                                 .collect(Collectors.joining(","));
                     } catch (IOException ex) {
-                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
                     }
                 }
                 //Pattern testRe = Pattern.compile("^.*src[:punct:]test[:punct:]java[:punct:](.*Test).java$");
@@ -2805,7 +2805,9 @@ public class Rvn extends Thread {
             ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
             if (v.isArray()) {
                 List<String> commands = v.values().stream().map(e -> e.toString()).collect(Collectors.toList());
-                this.addCommand(oNvv.get().toString(), commands);
+                if(oNvv.isPresent()){
+                    this.addCommand(oNvv.get().toString(), commands);
+                }
             } else {
                 v.entrySet().forEach(e -> this.addCommand(e.getKey(), optionalArray(e.getValue())));
             }
