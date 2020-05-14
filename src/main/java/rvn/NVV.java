@@ -119,4 +119,9 @@ public class NVV implements Comparable<NVV> {
         this.cVersion = new ComparableVersion(version);
     }
 
+    NVV with(Path path) {
+        this.path = path;
+        return this;
+    }
+
 }
