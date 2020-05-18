@@ -1,11 +1,15 @@
 
 import static java.lang.Boolean.TRUE;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 import rvn.Rvn;
@@ -16,6 +20,7 @@ import rvn.Rvn;
  */
 public class SimpleTests {
 
+    private Logger log = Logger.getLogger(SimpleTests.class.getName());
     @Test
     public void testCommand() throws Exception {
         String regex = "^a ([0-9])$";
@@ -68,5 +73,18 @@ public class SimpleTests {
         String s = "-Xms32m -Xmx256m -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009 -Xdebug";
         s = rvn.removeDebug(s);
         assertEquals("-Xms32m -Xmx256m  -Xdebug", s);
+    }
+
+    @Test
+    public void testMatches() throws Exception {
+        Rvn rvn = new Rvn();
+
+        rvn.matchDirIncludes.add(".*");
+        rvn.matchDirExcludes.add(".*system32.*");
+        rvn.matchDirExcludes.add("system32");
+        Path p = Path.of("C:", "windows", "system32");
+        log.info(p.toString() + " "+ Files.exists(p));
+        boolean m = rvn.matchSafe(p);
+        assertFalse(m);
     }
 }

@@ -148,10 +148,10 @@ public class Rvn extends Thread {
     private Map<NVV, Map<String, String>> properties;
 
     private Set<NVV> agProjects;
-    private List<String> matchFileIncludes;
-    private List<String> matchFileExcludes;
-    private List<String> matchDirIncludes;
-    private List<String> matchDirExcludes;
+    public List<String> matchFileIncludes;
+    public List<String> matchFileExcludes;
+    public List<String> matchDirIncludes;
+    public List<String> matchDirExcludes;
     private List<String> matchArtifactIncludes;
     private List<String> matchArtifactExcludes;
     private List<String> configFileNames;
@@ -603,15 +603,16 @@ public class Rvn extends Thread {
      */
     public void findConfiguration(String uri) {
         Path dir = Paths.get(uri);
-        log.fine(String.format(ANSI_WHITE + "searching %1$s for config" + ANSI_RESET, dir));
+        log.info(String.format(ANSI_WHITE + "searching %1$s for config" + ANSI_RESET, dir));
         findConfiguration(dir);
     }
 
     public void findConfiguration(Path path) {
+        log.finest(path.toString());
         try {
             if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
-                    stream.filter(child -> matchSafe(child)).forEach(this::findConfiguration);
+                    stream.filter(child -> this.matchSafe(child)).forEach(this::findConfiguration);
                 }
             } else if (path.getFileName() != null && this.configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
@@ -630,6 +631,7 @@ public class Rvn extends Thread {
 
     public void registerPath(Path path) {
         try {
+            log.finest(path.toString());
             if (Files.isDirectory(path)) {
                 try (Stream<Path> stream = Files.list(path)) {
                     stream.sorted().filter(child -> matchSafe(child)).forEach(this::registerPath);
@@ -660,13 +662,16 @@ public class Rvn extends Thread {
     }
 
     int depth = 0;
-    int maxDepth = 10;
+    int maxDepth = 16;
+    int lastDepth = 0;
 
     public Optional<FileTime> watchRecursively(Path dir) {
         depth++;
-        if (depth > maxDepth) {
+        if (depth > maxDepth && depth> lastDepth) {
             log.warning(dir + " is " + depth + " deep");
+        } else {
         }
+        lastDepth = depth;
         watch(dir);
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).forEach(this::watchRecursively);
@@ -1155,23 +1160,28 @@ public class Rvn extends Thread {
     }
 
     private synchronized void buildDeps(NVV nvv) {
+        log.info("requested to build " + nvv.toString());
         try {
             NVV pNvv = parent.get(nvv);
-            if (pNvv != null) {
+
+            /**
+            if (pNvv != null) { //AND parent is in buildArtifacts
                 buildDeps(pNvv);
-            }
+            }**/
+
             List<NVV> deps = this.projects.entrySet().stream()
-                    //.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
+                    //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
                     .flatMap(e -> projectDepends(nvv))
                     .filter(nvv3 -> this.buildArtifact.containsKey(nvv3))
                     .filter(nvv4 -> this.needsBuild(nvv4))
                     .distinct().collect(toList());
+
             if (deps.isEmpty()) {
                 qBuild(nvv, nvv);
             } else {
-
                 deps.forEach(
                         nvv2 -> {
+                            log.info("dep build " + nvv2.toString() + " "+ nvv.toString());
                             qBuild(nvv2, nvv);
                         }
                 );
@@ -1191,27 +1201,27 @@ public class Rvn extends Thread {
 
     private boolean matchFiles(Path path) throws IOException {
         return this.isConfigFile(path)
-                || matchFileIncludes.isEmpty() || (matchFileIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
-                || !matchFileExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent()); // FIXME: absolutely
+                || matchFileIncludes.isEmpty() || (matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
     }
 
     private boolean matchDirectories(Path path) {
-        return matchDirIncludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !matchDirExcludes.stream().filter(s -> this.match(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        return matchDirIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !matchDirExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
     }
 
     private boolean matchNVV(NVV nvv) {
-        return matchArtifactIncludes.isEmpty() || (matchArtifactIncludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent() // FIXME:
+        return matchArtifactIncludes.isEmpty() || (matchArtifactIncludes.stream().filter(s -> this.matchSafe(nvv, s)).findFirst().isPresent() // FIXME:
                 );
         // absolutely
         //&& !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent()); // FIXME:
         // absolutely
     }
 
-    private boolean match(Path path, String s) {
+    private boolean matchSafe(Path path, String s) {
 
         try {
-            return this.matchSafe(path, s);
+            return this.match(path, s);
         } catch (PatternSyntaxException pse) {
             log.warning(pse.getMessage() + " " + s);
         }
@@ -1219,18 +1229,20 @@ public class Rvn extends Thread {
         return false;
     }
 
-    private boolean matchSafe(Path path, String s) throws PatternSyntaxException {
-        boolean matches = path.toAbsolutePath().toString().matches(s);
+    public boolean match(Path path, String s) throws PatternSyntaxException {
+        boolean matches = path.toAbsolutePath().toString().matches(s)
+                || path.getFileName().toString().matches(s)
+                || path.getFileName().toString().equalsIgnoreCase(s);
         if (matches) {
             log.finest("matches path " + path.toString() + " " + s);
         }
         return matches;
     }
 
-    private boolean match(NVV nvv, String s) {
+    public boolean matchSafe(NVV nvv, String s) {
 
         try {
-            return this.matchSafe(nvv, s);
+            return this.match(nvv, s);
         } catch (PatternSyntaxException pse) {
             log.warning(pse.getMessage() + " " + s);
         }
@@ -1238,7 +1250,7 @@ public class Rvn extends Thread {
         return false;
     }
 
-    private boolean matchSafe(NVV nvv, String s) throws PatternSyntaxException {
+    public boolean match(NVV nvv, String s) throws PatternSyntaxException {
         boolean matches = nvv.toString().matches(s = expandNVVMatch(s));
 
         if (matches) {
@@ -1994,7 +2006,7 @@ public class Rvn extends Thread {
         log.fine(projectKey + "  " + commands.get(projectKey).toString());
     }
 
-    private boolean matchSafe(Path child) {
+    public boolean matchSafe(Path child) {
         try {
             return (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
         } catch (IOException ex) {
@@ -2122,7 +2134,7 @@ public class Rvn extends Thread {
     }
 
     private boolean isConfigFile(Path path) throws IOException {
-        return Files.isSameFile(path, this.config)
+        return (Files.exists(path) && Files.isSameFile(path, this.config))
                 || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
