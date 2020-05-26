@@ -175,6 +175,7 @@ public class Rvn extends Thread {
     private Boolean interrupt;
     private Boolean reuseOutput;
     private Boolean daemon = false;
+    private Boolean processPlugin = false;
     private String mvnOpts;
     private String javaHome;
     private String mvnArgs;
@@ -191,6 +192,7 @@ public class Rvn extends Thread {
     private Map<NVV, Boolean> reuseOutputMap;
     private Map<NVV, Boolean> showOutputMap;
     private Map<NVV, Boolean> daemonMap;
+    private Map<NVV, Boolean> processPluginMap;
 
     private Map<NVV, Future> futureMap = new ConcurrentHashMap<>();
 
@@ -305,6 +307,7 @@ public class Rvn extends Thread {
         reuseOutputMap = new HashMap<>();
         showOutputMap = new HashMap<>();
         daemonMap = new HashMap<>();
+        processPluginMap = new HashMap<>();
         logs = new ArrayList<>();
         paths = new ArrayList<>();
         reuseOutput = FALSE;
@@ -564,6 +567,12 @@ public class Rvn extends Thread {
         this.parent = new LinkedHashMap<>(this.parent);
     }
 
+    private Stream<Node> toStream(NodeList nodeList) {
+        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
+                Spliterator.ORDERED | Spliterator.NONNULL);
+        return StreamSupport.stream(splt, true);
+    }
+
     private static abstract class CloseableIterator<T> implements Iterator<T>, Closeable {
     }
 
@@ -667,7 +676,7 @@ public class Rvn extends Thread {
 
     public Optional<FileTime> watchRecursively(Path dir) {
         depth++;
-        if (depth > maxDepth && depth> lastDepth) {
+        if (depth > maxDepth && depth > lastDepth) {
             log.warning(dir + " is " + depth + " deep");
         } else {
         }
@@ -956,11 +965,14 @@ public class Rvn extends Thread {
 
         NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
 
-        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
-                Spliterator.ORDERED | Spliterator.NONNULL);
+        Stream<Node> stream = toStream(nodeList);
 
-        Set<NVV> deps = StreamSupport.stream(splt, true)
-                .map(n -> this.processDependency(n, nvv)).filter(t -> t != null)
+        if (processPluginMap.getOrDefault(nvv, processPlugin)) {
+            nodeList = (NodeList) xPath.compile("//plugin").evaluate(xmlDocument, XPathConstants.NODESET);
+            stream = Stream.concat(stream, toStream(nodeList));
+        }
+
+        Set<NVV> deps = stream.map(n -> this.processDependency(n, nvv)).filter(t -> t != null)
                 .filter(nvv2 -> this.matchNVV(nvv2, path))
                 .collect(Collectors.toSet());
 
@@ -985,12 +997,10 @@ public class Rvn extends Thread {
 
     private NVV processDependency(Node n, NVV proj) {
 
-        /**
-         * //TODO make configurable on project by project basis if
-         * (n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
-         * return null; }
-         *
-         */
+        if (!this.processPluginMap.getOrDefault(proj, processPlugin) && n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
+            return null;
+        }
+
         try {
             NVV nvv = nvvFrom(n);
             //log.info(String.format(proj.toString() + " depends on %1$s", nvv.toString()));
@@ -1165,10 +1175,9 @@ public class Rvn extends Thread {
             NVV pNvv = parent.get(nvv);
 
             /**
-            if (pNvv != null) { //AND parent is in buildArtifacts
-                buildDeps(pNvv);
-            }**/
-
+             * if (pNvv != null) { //AND parent is in buildArtifacts
+             * buildDeps(pNvv); }*
+             */
             List<NVV> deps = this.projects.entrySet().stream()
                     //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
                     .flatMap(e -> projectDepends(nvv))
@@ -1181,7 +1190,7 @@ public class Rvn extends Thread {
             } else {
                 deps.forEach(
                         nvv2 -> {
-                            log.info("dep build " + nvv2.toString() + " "+ nvv.toString());
+                            log.info("dep build " + nvv2.toString() + " " + nvv.toString());
                             qBuild(nvv2, nvv);
                         }
                 );
@@ -2897,6 +2906,16 @@ public class Rvn extends Thread {
                 mvnArgsMap.compute(oNvv.get(), (k, o) -> join(o, v3));
             } else {
                 mvnArgs = v2.toString();
+            }
+            log.fine(key + " " + v);
+        }
+
+        if (result.hasMember(key = "plugins")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+                processPluginMap.put(oNvv.get(), v);
+            } else {
+                processPlugin = v;
             }
             log.fine(key + " " + v);
         }
