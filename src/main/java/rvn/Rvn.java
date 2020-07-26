@@ -667,7 +667,7 @@ public class Rvn extends Thread {
 
     public Optional<FileTime> watchRecursively(Path dir) {
         depth++;
-        if (depth > maxDepth && depth> lastDepth) {
+        if (depth > maxDepth && depth > lastDepth) {
             log.warning(dir + " is " + depth + " deep");
         } else {
         }
@@ -1165,10 +1165,9 @@ public class Rvn extends Thread {
             NVV pNvv = parent.get(nvv);
 
             /**
-            if (pNvv != null) { //AND parent is in buildArtifacts
-                buildDeps(pNvv);
-            }**/
-
+             * if (pNvv != null) { //AND parent is in buildArtifacts
+             * buildDeps(pNvv); }*
+             */
             List<NVV> deps = this.projects.entrySet().stream()
                     //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
                     .flatMap(e -> projectDepends(nvv))
@@ -1181,7 +1180,7 @@ public class Rvn extends Thread {
             } else {
                 deps.forEach(
                         nvv2 -> {
-                            log.info("dep build " + nvv2.toString() + " "+ nvv.toString());
+                            log.info("dep build " + nvv2.toString() + " " + nvv.toString());
                             qBuild(nvv2, nvv);
                         }
                 );
@@ -2309,9 +2308,10 @@ public class Rvn extends Thread {
 
             log.info(settings);
             if (settings != null) {
-                if (Files.exists(Paths.get(settings))) {
+                Path settingsPath = projectPath.getParent().resolve(Paths.get(settings));
+                if (Files.exists(settingsPath)) {
                     filtered.add(1, "-s");
-                    filtered.add(2, settings);
+                    filtered.add(2, settingsPath.toAbsolutePath().toString());
 
                 } else {
                     log.warning("settings " + settings + " does not exist");
