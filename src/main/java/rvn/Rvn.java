@@ -148,6 +148,7 @@ public class Rvn extends Thread {
     private Map<NVV, Map<String, String>> properties;
 
     private Set<NVV> agProjects;
+    //TODO make these paths
     public List<String> matchFileIncludes;
     public List<String> matchFileExcludes;
     public List<String> matchDirIncludes;
@@ -171,10 +172,12 @@ public class Rvn extends Thread {
     boolean ee = false;
     Boolean showOutput = true;
 
+    private static final String lockFileName = ".lock.rvn";
     private Path lastFile = null;
     private Boolean interrupt;
     private Boolean reuseOutput;
     private Boolean daemon = false;
+    private Boolean processPlugin = false;
     private String mvnOpts;
     private String javaHome;
     private String mvnArgs;
@@ -191,6 +194,7 @@ public class Rvn extends Thread {
     private Map<NVV, Boolean> reuseOutputMap;
     private Map<NVV, Boolean> showOutputMap;
     private Map<NVV, Boolean> daemonMap;
+    private Map<NVV, Boolean> processPluginMap;
 
     private Map<NVV, Future> futureMap = new ConcurrentHashMap<>();
 
@@ -305,6 +309,7 @@ public class Rvn extends Thread {
         reuseOutputMap = new HashMap<>();
         showOutputMap = new HashMap<>();
         daemonMap = new HashMap<>();
+        processPluginMap = new HashMap<>();
         logs = new ArrayList<>();
         paths = new ArrayList<>();
         reuseOutput = FALSE;
@@ -466,12 +471,16 @@ public class Rvn extends Thread {
 
     private boolean needsBuild(NVV nvv) {
         Optional<Path> bPath = this.buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
-        Optional<Path> rPath = this.repoArtifact.entrySet().stream().filter(e -> e.getKey().equals(nvv)).map(e -> e.getValue()).findAny();
-        if (bPath.isEmpty() || rPath.isEmpty()) {
-            log.fine(nvv.toString() + " " + bPath + " " + rPath);
+        Optional<Path> rPath = this.repoArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+
+        if (bPath.isPresent() && rPath.isEmpty()) {
+            log.finest("missing " + nvv.toString() + " " + bPath + " " + rPath);
             return true;
+        } else if (bPath.isPresent() && rPath.isPresent()) {
+            return !compareHashes(bPath.get(), rPath.get());
+        } else {
+            return false;
         }
-        return !compareHashes(bPath.get(), rPath.get());
     }
 
     private void resolveVersion() {
@@ -562,6 +571,12 @@ public class Rvn extends Thread {
         this.buildArtifact = new LinkedHashMap<>(this.buildArtifact);
         this.repoArtifact = new LinkedHashMap<>(this.repoArtifact);
         this.parent = new LinkedHashMap<>(this.parent);
+    }
+
+    private Stream<Node> toStream(NodeList nodeList) {
+        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
+                Spliterator.ORDERED | Spliterator.NONNULL);
+        return StreamSupport.stream(splt, true);
     }
 
     private static abstract class CloseableIterator<T> implements Iterator<T>, Closeable {
@@ -666,8 +681,19 @@ public class Rvn extends Thread {
     int lastDepth = 0;
 
     public Optional<FileTime> watchRecursively(Path dir) {
+        try {
+            Thread.currentThread().yield();
+        } catch (Exception x) {
+        }
+
         depth++;
+<<<<<<< .mine
         if (depth > maxDepth && depth > lastDepth) {
+
+=======
+        //log.info(dir + " is " + depth + " deep");
+        if (depth > maxDepth && depth > lastDepth) {
+>>>>>>> .theirs
             log.warning(dir + " is " + depth + " deep");
         } else {
         }
@@ -835,9 +861,13 @@ public class Rvn extends Thread {
 
         boolean skipHash = !path.endsWith("pom.xml") || isConfigFile(path);
 
-        if (!skipHash && hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
-            log.info("no hash change detected " + path);
-            return;
+        try {
+            if (!skipHash && hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
+                log.info("no hash change detected " + path);
+                return;
+            }
+        } catch (Exception x) {
+            log.warning("hash " + path.toString() + " " + x.getMessage());
         }
 
         if (path.toString().endsWith(".pom")) {
@@ -848,7 +878,7 @@ public class Rvn extends Thread {
 
             log.info(String.format("nvv: %1$s %2$s", path, nvv));
             if (matchNVV(nvv, path)) {
-                //this.buildDeps(nvv);
+                this.buildDeps(nvv);
             }
             return;
         } else if (this.configFileNames.contains(path.getFileName().toString())) {
@@ -861,6 +891,7 @@ public class Rvn extends Thread {
                 log.info(String.format("config nvv: %1$s %2$s", path, nvv));
             }
             this.loadConfiguration(path);
+            this.watch(path.getParent());
             return;
         }
 
@@ -956,11 +987,14 @@ public class Rvn extends Thread {
 
         NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
 
-        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
-                Spliterator.ORDERED | Spliterator.NONNULL);
+        Stream<Node> stream = toStream(nodeList);
 
-        Set<NVV> deps = StreamSupport.stream(splt, true)
-                .map(n -> this.processDependency(n, nvv)).filter(t -> t != null)
+        if (processPluginMap.getOrDefault(nvv, processPlugin)) {
+            nodeList = (NodeList) xPath.compile("//plugin").evaluate(xmlDocument, XPathConstants.NODESET);
+            stream = Stream.concat(stream, toStream(nodeList));
+        }
+
+        Set<NVV> deps = stream.map(n -> this.processDependency(n, nvv)).filter(t -> t != null)
                 .filter(nvv2 -> this.matchNVV(nvv2, path))
                 .collect(Collectors.toSet());
 
@@ -985,12 +1019,10 @@ public class Rvn extends Thread {
 
     private NVV processDependency(Node n, NVV proj) {
 
-        /**
-         * //TODO make configurable on project by project basis if
-         * (n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
-         * return null; }
-         *
-         */
+        if (!this.processPluginMap.getOrDefault(proj, processPlugin) && n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
+            return null;
+        }
+
         try {
             NVV nvv = nvvFrom(n);
             //log.info(String.format(proj.toString() + " depends on %1$s", nvv.toString()));
@@ -1006,9 +1038,13 @@ public class Rvn extends Thread {
         NVV parentNvv = null;
         try {
             Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
-            parentNvv = nvvFrom(parent);
+            if (parent != null) {
+                parentNvv = nvvFrom(parent);
+                parentNvv.isParent = true;
+            }
 
         } catch (Exception e) {
+            log.warning("parent fail " + nvv + " " + e.getMessage());
         }
         log.fine(String.format("%1$s with parent %2$s", nvv.toString(), parentNvv));
         return parentNvv;
@@ -1109,9 +1145,9 @@ public class Rvn extends Thread {
                 hashes.put(path.toString(), this.toSHA1(path));
                 writeHashes();
             } catch (java.nio.charset.MalformedInputException ex) {
-                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                log.warning("hash " + path.toString() + " " + ex.getMessage());
             } catch (IOException ex) {
-                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                log.warning("hash " + path.toString() + " " + ex.getMessage());
             }
         }
 
@@ -1146,7 +1182,7 @@ public class Rvn extends Thread {
             ScheduledFuture<?> future = executor.schedule(() -> {
                 log.fine(String.format("executing %1$s with batchWait %2$s ms", nvv.toString(), batchWait.toMillis()));
                 try {
-                    Rvn.this.buildDeps(nvv);
+                    Rvn.this.build(nvv);
                 } catch (Exception e) {
                     log.severe("error " + e);
                 } finally {
@@ -1157,6 +1193,15 @@ public class Rvn extends Thread {
             log.fine(String.format("waiting for future %1$s in %2$s", nvv.toString(), batchWait.toString()));
             return future;
         });
+    }
+
+    private synchronized void build(NVV nvv) {
+        NVV pNvv = parent.get(nvv);
+
+        if (pNvv != null && this.needsBuild(pNvv)) {
+            build(pNvv);
+        }
+        qBuild(nvv);
     }
 
     private synchronized void buildDeps(NVV nvv) {
@@ -1175,6 +1220,7 @@ public class Rvn extends Thread {
                     .filter(nvv4 -> this.needsBuild(nvv4))
                     .distinct().collect(toList());
 
+            }
             if (deps.isEmpty()) {
                 qBuild(nvv, nvv);
             } else {
@@ -1229,6 +1275,7 @@ public class Rvn extends Thread {
     }
 
     public boolean match(Path path, String s) throws PatternSyntaxException {
+        s = ".*" + s + ".*";
         boolean matches = path.toAbsolutePath().toString().matches(s)
                 || path.getFileName().toString().matches(s)
                 || path.getFileName().toString().equalsIgnoreCase(s);
@@ -1285,7 +1332,12 @@ public class Rvn extends Thread {
         });
     }
 
+    private void qBuild(NVV nvv) {
+        qBuild(nvv, nvv);
+    }
+
     private void qBuild(NVV nvv, NVV next) {
+        log.warning("qbuild " + nvv);
 
         Path dir = buildArtifact.get(nvv);
 
@@ -1305,6 +1357,7 @@ public class Rvn extends Thread {
         Edge edge = new Edge(nvv, next);
 
         if (!q.contains(edge)) {
+            log.info("build " + edge.toString());
             q.insert(edge);
         }
         log.finest(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
@@ -1482,12 +1535,6 @@ public class Rvn extends Thread {
                 .add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue.", (command) -> {
                     if (command.equals("!!")) {
                         stopAllBuilds();
-                        List<NVV> l = new ArrayList<>();
-                        this.q.oq.drainTo(l);
-                        if (l.isEmpty()) {
-                        } else {
-                            log.info("cancelled " + ANSI_CYAN + l.toString() + ANSI_RESET);
-                        }
                         return TRUE;
                     }
                     return FALSE;
@@ -1550,7 +1597,16 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("\\\\", "\\\\", "Build all yet to build list", (command) -> {
             if (command.trim().equals("\\\\")) {
-                this.toBuild.stream().forEach(nvv -> this.buildDeps(nvv));
+                this.toBuild.stream().forEach(nvv -> this.build(nvv));
+                return TRUE;
+            }
+            return FALSE;
+        }));
+
+        commandHandlers.add(new CommandHandler("##", "##", "Clear all hashes", (command) -> {
+            if (command.trim().equals("##")) {
+
+                this.hashes.clear();
                 return TRUE;
             }
             return FALSE;
@@ -1600,7 +1656,7 @@ public class Rvn extends Thread {
 
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
-                    return this.paths.stream().filter(p -> p != null && this.match(p, command)).map(p -> {
+            return this.paths.stream().filter(p -> this.buildPaths.containsKey(p)).filter(p -> p != null && this.match(p, command)).map(p -> {
                         this.hashes.remove(p.toString());
                         try {
                             this.lastChangeFile = p;
@@ -1669,7 +1725,7 @@ public class Rvn extends Thread {
         commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
             if (command.trim().equals("/")) {
                 failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
-                    Rvn.this.buildDeps(e.getKey());
+                    Rvn.this.build(e.getKey());
                 });
                 return TRUE;
             }
@@ -1943,7 +1999,7 @@ public class Rvn extends Thread {
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
     }
 
-    private void loadConfiguration(Path path) {
+    private Path loadConfiguration(Path path) {
         try {
             NVV nvv = null;
             if (this.configFileNames.contains(path.getFileName().toString())) {
@@ -1955,8 +2011,12 @@ public class Rvn extends Thread {
             }
             URL configURL = path.toUri().toURL();
             this.loadConfiguration(configURL, nvv);
+            log.info(String.format("watching %1$s for config changes", path.getParent()));
+            this.watch(path.getParent());
+            return path;
         } catch (Exception ex) {
             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            return null;
         }
     }
 
@@ -1976,7 +2036,7 @@ public class Rvn extends Thread {
             log.info("loading from classpath " + name);
             configURL = Rvn.class.getResource(name);
         }
-        this.config = this.loadConfiguration(configURL);
+        this.config = this.loadConfiguration(Path.of(configURL.toURI()));
     }
 
     private void addCommand(String projectKey, List<String> newCommandList) {
@@ -2083,18 +2143,26 @@ public class Rvn extends Thread {
     private synchronized void processEvent(Path child, WatchEvent.Kind<?> kind) {
         try {
 
-            if (child.equals(config)) {
+            if (log.isLoggable(Level.INFO)) {
+                log.info(String.format("kind %1$s %2$s ", kind, child));
+            }
+
+            if (child.equals(hashConfig)) {
+                return;
+            }
+
+            if (child.endsWith(lockFileName)) {
+                return;
+            }
+
+            if (child.equals(config) || this.isConfigFile(child)) {
                 try {
-                    log.info("config changed " + child);
+                    log.info(ANSI_RED + "config changed " + ANSI_GREEN + child + ANSI_RESET);
                     this.reloadConfiguration();
                 } catch (Throwable ex) {
                     log.log(Level.SEVERE, ex.getMessage(), ex);
                 }
                 return;
-            }
-
-            if (log.isLoggable(Level.INFO)) {
-                log.info(String.format("kind %1$s %2$s ", kind, child));
             }
 
             if (kind == ENTRY_DELETE) {
@@ -2111,6 +2179,7 @@ public class Rvn extends Thread {
             } else if (kind == ENTRY_MODIFY) {
                 processPath(child);
             }
+
         } catch (AccessDeniedException ex) {
             log.log(Level.INFO, ex.getMessage());
         } catch (NoSuchFileException ex) {
@@ -2173,15 +2242,12 @@ public class Rvn extends Thread {
                     }
                 }
 
-                try (Stream<NVV> path = q.paths()) {
-                    if (path == null) {
-                        continue;
-                    }
+                try (Stream<NVV> path = q.paths2()) {
                     path.forEach(nvv -> {
                         doBuildTimeout(nvv);
+                        q.remove(nvv);
                     });
                 }
-
             }
             log.info("builder exited - no more builds - restart");
             Thread.dumpStack();
@@ -2245,6 +2311,17 @@ public class Rvn extends Thread {
                 });
 
             }
+            result.whenComplete((r, t) -> {
+                if (r == true && t != null) {
+                    Rvn.this.buildDeps(nvv);
+                }
+            });
+            result.exceptionally(x -> {
+                synchronized (q) {
+                    q.truncate();
+                }
+                return true;
+            });
 
             if (result == null) {
                 log.info("no commands to build");
@@ -2318,6 +2395,10 @@ public class Rvn extends Thread {
                 }
             }
 
+            if (nvv.isParent) {
+                filtered.add("-N");
+            }
+
             final String[] filteredArgs = filtered.toArray(new String[filtered.size()]);
 
             Supplier<Boolean> task;
@@ -2330,7 +2411,7 @@ public class Rvn extends Thread {
                     Instant then = Instant.now();
                     Process p = null;
                     boolean timedOut = false;
-                    Path lockFile = projectPath.getParent().resolve(".lock");
+                    Path lockFile = projectPath.getParent().resolve(lockFileName);
                     try {
                         lockFile = Files.createFile(lockFile);
                     } catch (IOException ex) {
@@ -2897,6 +2978,16 @@ public class Rvn extends Thread {
                 mvnArgsMap.compute(oNvv.get(), (k, o) -> join(o, v3));
             } else {
                 mvnArgs = v2.toString();
+            }
+            log.fine(key + " " + v);
+        }
+
+        if (result.hasMember(key = "plugins")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+                processPluginMap.put(oNvv.get(), v);
+            } else {
+                processPlugin = v;
             }
             log.fine(key + " " + v);
         }

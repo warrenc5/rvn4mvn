@@ -43,13 +43,25 @@ public class BuildGraphTest {
                 new Edge(k, k)
         ));
 
+        System.out.println("edges->" + edges.toString());
         edges.forEach(edge -> {
             graph.insert(edge);
         });
 
-        System.out.println("g->" + graph.toString());
-        ordered = graph.paths().collect(Collectors.toList());
+        System.out.println("graph->" + graph.toString());
+
+        List<NVV> roots = graph.roots();
+        System.out.println("roots->" + roots);
+
+        Assert.assertArrayEquals(new NVV[]{a, k}, roots.toArray(new NVV[roots.size()]));
+
+        ordered = graph.paths2().collect(Collectors.toList());
         System.out.println("o->" + ordered.toString());
+        NVV[] ex = new NVV[]{a, e, f, d, c, b, k, z};
+        System.out.println("expected->" + Arrays.asList(ex).toString());
+        Assert.assertTrue(ordered.containsAll(Arrays.asList(ex)));
+        System.out.println("contains all!");
+        Assert.assertArrayEquals(ex, ordered.toArray(new NVV[ordered.size()]));
         Assert.assertArrayEquals(new NVV[]{a, e, f, d, c, b, k, z}, ordered.toArray(new NVV[ordered.size()]));
 
         graph
@@ -59,7 +71,7 @@ public class BuildGraphTest {
                 .insert(new Edge(y, x));
 
         System.out.println("g->" + graph.toString());
-        ordered = graph.paths().collect(Collectors.toList());
+        ordered = graph.paths2().collect(Collectors.toList());
         System.out.println("o->" + ordered.toString());
         Assert.assertArrayEquals(new NVV[]{x, y, z}, ordered.toArray(new NVV[ordered.size()]));
 

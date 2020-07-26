@@ -12,6 +12,7 @@ public class NVV implements Comparable<NVV> {
     public String version;
     public ComparableVersion cVersion;
     public Path path;
+    public boolean isParent;
 
     public NVV(String name, String vendor, String version) {
         this(name, vendor, version, null);
@@ -110,7 +111,8 @@ public class NVV implements Comparable<NVV> {
     @Override
     public int compareTo(NVV other) {
         return Comparator.comparing(NVV::getLongName)
-                .thenComparing((NVV nvv1, NVV nvv2) -> nvv1.cVersion.compareTo(nvv2.cVersion))
+                .thenComparing((NVV nvv1, NVV nvv2)
+                        -> (nvv1.cVersion == nvv2.cVersion) ? 0 : (nvv1.cVersion == null ? -1 : (nvv2.cVersion == null ? 1 : nvv1.cVersion.compareTo(nvv2.cVersion))))
                 .compare(this, other);
     }
 
