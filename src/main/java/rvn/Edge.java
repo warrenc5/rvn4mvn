@@ -3,15 +3,24 @@ package rvn;
 import java.nio.file.Path;
 import java.util.Objects;
 
-public class Edge {
-    
-    public NVV nvv1;
-    public NVV nvv2;
-    public Path path;
+public class Edge<T> {
 
-    public Edge(NVV nvv1, NVV nvv2) {
+    public T nvv1;
+    public T nvv2;
+    public Path path;
+    public boolean leaf;
+
+    public Edge(T nvv1) {
+        this.nvv1 = nvv1;
+        this.leaf = true;
+    }
+
+    public Edge(T nvv1, T nvv2) {
         this.nvv1 = nvv1;
         this.nvv2 = nvv2;
+        if (nvv1 == nvv2) {
+            this.leaf = true;
+        }
     }
 
     @Override
@@ -45,7 +54,10 @@ public class Edge {
 
     @Override
     public String toString() {
+        if (leaf) {
+            return nvv1 + "&";
+        }
         return nvv1 + ">" + nvv2;
     }
-    
+
 }

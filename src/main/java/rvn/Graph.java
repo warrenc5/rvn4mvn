@@ -5,17 +5,18 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -23,14 +24,12 @@ import java.util.stream.StreamSupport;
  *
  * @author wozza
  */
-public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
+public class Graph<T> extends ConcurrentSkipListMap<T, Set<T>> {
 
     private Logger log = Logger.getLogger(Graph.class.getName());
-    Deque<NVV> q = new ArrayDeque<>();
-    ArrayBlockingQueue<NVV> oq;
+    Deque<T> q = new ArrayDeque<>();
 
     public Graph() {
-        this.oq = new ArrayBlockingQueue<>(10000);
     }
 
     @Override
@@ -40,96 +39,143 @@ public class Graph<T> extends ConcurrentSkipListMap<NVV, Set<NVV>> {
     }
 
     public void truncate() {
-        oq.clear();
     }
 
-    public Graph<T> insert(Edge edge) {
-        Set<NVV> n = super.getOrDefault(edge.nvv1, new LinkedHashSet<>());
-        n.add(edge.nvv2);
+    public Graph<T> insert(Edge<T> edge) {
+        Set<T> n = super.getOrDefault(edge.nvv1, new LinkedHashSet<>());
+        if (!edge.leaf) {
+            n.add(edge.nvv2);
+        }
         super.putIfAbsent(edge.nvv1, n);
         return this;
     }
 
-    public Stream<NVV> paths() {
-        return paths(null);
+    public Stream<T> paths2() {
+        return paths2(null);
     }
 
-    public Stream<NVV> paths(NVV nvv) {
-
-        List<NVV> collect = this.entrySet().stream().flatMap(e -> {
-            return e.getValue().stream().filter(n -> (e.getKey().equals(nvv) | nvv == null))
-                    .flatMap(v -> {
-                        findAncestor(e.getKey(), v);
-                        return q.stream();
-                    });
-        }).collect(Collectors.toList());
-
-        Collections.reverse(collect);
-        collect.iterator().forEachRemaining(e -> {
-            synchronized (oq) {
-                if (!oq.contains(e)) {
-                    oq.add(e);
-                }
-            }
-        });
-
-        log.info("q->" + q.toString() + " " + q.size());
-
-        this.clear();
-        Spliterator<NVV> spliterator = new Spliterators.AbstractSpliterator<NVV>(oq.size(), 0) {
-            @Override
-            public boolean tryAdvance(Consumer<? super NVV> action) {
-                log.info("bq->" + oq.toString().replace(',', '\n') + " " + Rvn.ANSI_YELLOW + oq.size() + " remaining " + Rvn.ANSI_RESET);
-                NVV element = null;
-                try {
-                    Thread.yield();
-                    synchronized (oq) {
-                        element = oq.poll(10, TimeUnit.MILLISECONDS);
-                    }
-                } catch (InterruptedException ex) {
-                }
-                if (element == null) {
-                    return false;
-                } else {
-                    action.accept(element);
-                    return true;
-                }
-            }
-
-        };
-
-        return StreamSupport.stream(spliterator, false);
-    }
-
-    private Collection<NVV> order(NVV a, NVV c) {
-        findAncestor(a, c);
-        return q;
-    }
-
-    private void findAncestor(NVV n1, NVV n2) {
-        this.entrySet().stream().filter(n -> n.getValue().contains(n2))
-                .map(n -> new Edge(n.getKey(), n2))
-                .collect(Collectors.toSet()).stream()
-                .forEach(e -> {
-            log.fine(n1 + " " + n2 + " " + e.toString() + "  " + q.toString());
-                    q.remove(e.nvv1);
-                    q.offerFirst(e.nvv1);
-
-                    if (e.nvv1.equals(e.nvv2)) {
-                        return;
-                    }
-
-            if (!(n1.equals(e.nvv1) || n2.equals(e.nvv2))) {
-                findAncestor(n2, e.nvv1);
-                    }
-
-                    q.remove(e.nvv2);
-                    q.offerLast(e.nvv2);
-
-                });
+    public Stream<T> paths2(T nvv) {
+        GraphIterator<T> g = new GraphIterator<T>(this.roots());
+        Spliterator<T> supplier = Spliterators.spliterator(g, this.size(), 0);
+        return StreamSupport.stream(supplier, false);
     }
 
     public boolean contains(Edge edge) {
         return this.containsKey(edge.nvv1) && this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
+    }
+
+    public List<T> roots() {
+        return this.keySet().stream().filter(k -> {
+            return this.values().stream().allMatch(
+                    v -> !v.contains(k)
+            );
+        }).collect(toList());
+    }
+
+    private boolean isLeaf(T current) {
+        if (current == null) {
+            return true;
+        }
+        Set<T> v = this.get(current);
+        return v == null || v.isEmpty();
+    }
+    static int depth = 0;
+
+    class GraphIterator<K> implements Iterator<K> {
+
+        private Set<K> visited = new HashSet<>();
+        K current;
+        private Deque<Iterator<K>> it = new ArrayDeque<>();
+        private Graph<K> g = (Graph<K>) Graph.this;
+        private Iterator<K> lit;
+
+        public GraphIterator() {
+        }
+
+        public GraphIterator(Collection<K> c) {
+            log("init " + c.toString() + " " + current + " " + it.size());
+            lit = c.iterator();
+        }
+
+        public GraphIterator(Deque<Iterator<K>> it, Set<K> visited, Collection<K> c) {
+            this.it = it;
+            this.visited = visited;
+            log("init " + c.toString() + " " + current + " " + it.size());
+            lit = c.iterator();
+        }
+
+        @Override
+        public boolean hasNext() {
+            //log("?" + current + " " + it.size() + " " + g.isLeaf(current) + " " + (it.isEmpty() ? false : it.peek().hasNext()));
+
+            boolean hasNext = false;
+
+            if (current != null && !g.isLeaf(current)) {
+                lit = pushNew(current);
+            }
+
+            hasNext = lit.hasNext();
+
+            if (!hasNext) {
+                if (!it.isEmpty()) {
+                    pop();
+                    if (lit != null) {
+                        hasNext = lit.hasNext(); //recurse
+                    } else {
+                        //end
+                    }
+
+                } else {
+                    //end
+                }
+
+            }
+
+            return hasNext;
+        }
+
+        @Override
+        public K next() {
+            log(">" + current + " " + visited.toString());
+            current = lit.next();
+            // it.peek().remove();
+            visited.add(current);
+            log("<" + current + " " + visited.toString());
+            return current;
+        }
+
+        private Iterator<K> pushNew(K c) {
+            log("-?" + c);
+            Set<K> v = Graph.this.getOrDefault(c, Collections.EMPTY_SET);
+            Set<K> unvisited = v.stream().filter(k -> !visited.contains(k)).collect(toSet());
+            if (!unvisited.isEmpty()) {
+                log("->" + c + " " + unvisited.toString());
+                it.push(new GraphIterator<K>(it, visited, unvisited));
+                depth++;
+            }
+            log("push " + it.size() + " " + depth);
+            return lit;
+            //}
+        }
+
+        private void log(String s) {
+            System.out.println(s() + s);
+        }
+
+        private String s() {
+            StringBuilder bob = new StringBuilder();
+            for (int i = 0; i < depth; i++) {
+                bob.append("  ");
+            }
+
+            return bob.toString();
+
+        }
+
+        private void pop() {
+            lit = this.it.pop();
+            depth--;
+            log("pop " + it.size() + " " + depth);
+        }
     }
 }
