@@ -343,6 +343,13 @@
             <artifactId>slf4j-api</artifactId>
             <version>2.0.0-alpha0</version>
         </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+            <scope>test</scope>
+            <type>jar</type>
+        </dependency>
     </dependencies>
     <distributionManagement
         xmlns:mvn="http://maven.apache.org/POM/4.0.0">

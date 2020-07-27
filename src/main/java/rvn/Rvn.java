@@ -687,13 +687,7 @@ public class Rvn extends Thread {
         }
 
         depth++;
-<<<<<<< .mine
         if (depth > maxDepth && depth > lastDepth) {
-
-=======
-        //log.info(dir + " is " + depth + " deep");
-        if (depth > maxDepth && depth > lastDepth) {
->>>>>>> .theirs
             log.warning(dir + " is " + depth + " deep");
         } else {
         }
@@ -1220,7 +1214,6 @@ public class Rvn extends Thread {
                     .filter(nvv4 -> this.needsBuild(nvv4))
                     .distinct().collect(toList());
 
-            }
             if (deps.isEmpty()) {
                 qBuild(nvv, nvv);
             } else {
