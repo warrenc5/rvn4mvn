@@ -12,7 +12,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
+import rvn.Globals;
 import rvn.Rvn;
+import rvn.SimpleCommand;
+import rvn.Util;
 
 /**
  *
@@ -32,7 +35,7 @@ public class SimpleTests {
         assertEquals(input, matcher.group(0));
         assertEquals("3", matcher.group(1));
 
-        boolean result = new Rvn().new SimpleCommand(regex) {
+        boolean result = new SimpleCommand(regex) {
             public Boolean configure(Iterator<String> i) throws Exception {
                 assertTrue(i.hasNext());
                 assertEquals(input, i.next());
@@ -49,7 +52,7 @@ public class SimpleTests {
     public void indexRange() {
         String range = "10,11,1-3,8,6-9,9";
 
-        List<Integer> list = Rvn.rangeToIndex(range);
+        List<Integer> list = Util.rangeToIndex(range);
         List<Integer> expected = Arrays.asList(new Integer[]{10, 11, 1, 2, 3, 8, 6, 7, 8, 9, 9});
         assertEquals(expected, list);
 
@@ -60,7 +63,7 @@ public class SimpleTests {
         Rvn rvn = new Rvn();
         String project = "group:art:ver";
         String match = "::";
-        boolean selected = rvn.matchNVV(project, match);
+        boolean selected = rvn.getProject().matchNVV(project, match);
         assertTrue(selected);
 
     }
@@ -71,7 +74,7 @@ public class SimpleTests {
         Rvn rvn = new Rvn();
 
         String s = "-Xms32m -Xmx256m -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009 -Xdebug";
-        s = rvn.removeDebug(s);
+        s = rvn.getBuildIt().removeDebug(s);
         assertEquals("-Xms32m -Xmx256m  -Xdebug", s);
     }
 
@@ -79,12 +82,12 @@ public class SimpleTests {
     public void testMatches() throws Exception {
         Rvn rvn = new Rvn();
 
-        rvn.matchDirIncludes.add(".*");
-        rvn.matchDirExcludes.add(".*system32.*");
-        rvn.matchDirExcludes.add("system32");
+        Globals.config.matchDirIncludes.add(".*");
+        Globals.config.matchDirExcludes.add(".*system32.*");
+        Globals.config.matchDirExcludes.add("system32");
         Path p = Path.of("C:", "windows", "system32");
         log.info(p.toString() + " "+ Files.exists(p));
-        boolean m = rvn.matchSafe(p);
+        boolean m = rvn.getPathWatcher().matchSafe(p);
         assertFalse(m);
     }
 }

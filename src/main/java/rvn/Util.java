@@ -21,11 +21,11 @@ public class Util {
 
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
 
-    static void logX(Logger log, IOException ex) {
+    static void logX(Logger log, Exception ex) {
         log.log(Level.SEVERE, ex.getMessage(), ex);
     }
 
-    static void log(Logger log, IOException ex) {
+    static void log(Logger log, Exception ex) {
         log.log(Level.SEVERE, ex.getMessage());
     }
 
@@ -78,7 +78,7 @@ public class Util {
     public static boolean between(int i, int min, int max) {
         return i >= min && i <= max;
     }
-    
+
     public static Stream<Node> toStream(NodeList nodeList) {
         Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
                 Spliterator.ORDERED | Spliterator.NONNULL);

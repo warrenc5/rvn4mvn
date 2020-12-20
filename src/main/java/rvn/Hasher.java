@@ -43,7 +43,7 @@ public class Hasher {
 
     }
 
-    private boolean compareHashes(Path bPath, Path rPath) {
+    boolean compareHashes(Path bPath, Path rPath) {
 
         if (bPath == null || rPath == null) {
             return false;

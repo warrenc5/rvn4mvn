@@ -43,6 +43,7 @@ import static rvn.Globals.locations;
 import static rvn.Globals.paths;
 import static rvn.Globals.projects;
 import static rvn.Globals.rehash;
+import static rvn.Globals.thenFinished;
 import static rvn.Globals.toBuild;
 
 /**
@@ -64,8 +65,6 @@ public class PathWatcher extends Thread {
     public final WatchService watcher;
 
     private static PathWatcher instance;
-    private Instant thenFinished = null;
-    private Instant thenStarted = null;
 
     static {
         try {

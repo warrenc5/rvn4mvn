@@ -4,6 +4,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -62,15 +63,23 @@ public class Globals {
     public static final String lockFileName = ".lock.rvn";
     public static Path hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
 
-    public static void rehash() {
+    public static Instant thenFinished = null; //TODO use map for concurrent builds
+    public static Instant thenStarted = null;
 
+    static Map<NVV, String> lastCommand;
+
+    static {
+        init();
+    }
+
+    public static void rehash() {
         buildArtifact = new LinkedHashMap<>(buildArtifact);
         repoArtifact = new LinkedHashMap<>(repoArtifact);
         parent = new LinkedHashMap<>(parent);
-
     }
 
     public static void init() {
+        baseConfig = new HashMap<>();
         agProjects = new HashSet<>();
         properties = new HashMap<>();
         locations = new ConcurrentSkipListSet<>();
@@ -89,6 +98,10 @@ public class Globals {
         failMap = new LinkedHashMap<>();
         futureMap = new ConcurrentHashMap<>();
 
+        lastCommand = new HashMap<>();
+        paths = new ArrayList<>();
+        thenFinished = Instant.now();
+        thenStarted = Instant.now();
     }
 
 }

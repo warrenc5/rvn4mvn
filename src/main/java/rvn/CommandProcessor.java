@@ -8,7 +8,6 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Scanner;
@@ -23,6 +22,8 @@ import jdk.internal.org.jline.terminal.Terminal;
 import jdk.internal.org.jline.terminal.TerminalBuilder;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_YELLOW;
+import static rvn.Globals.thenFinished;
+import static rvn.Globals.thenStarted;
 
 /**
  *
@@ -31,10 +32,6 @@ import static rvn.Ansi.ANSI_YELLOW;
 public class CommandProcessor {
 
     private Logger log = Logger.getLogger(Rvn.class.getName());
-
-    private Map<NVV, String> lastCommand;
-    private Instant thenFinished = null;
-    private Instant thenStarted = null;
 
     public List<CommandHandler> commandHandlers;
 
@@ -78,7 +75,7 @@ public class CommandProcessor {
         this.processStdIn(iterator);
     }
 
-    private void processStdInOld() throws IOException {
+    void processStdInOld() throws IOException {
         Scanner scanner = new Scanner(System.in);
 
         scanner.useDelimiter(System.getProperty("line.separator"));
@@ -115,6 +112,7 @@ public class CommandProcessor {
         }
 
         public void run() {
+            log.info(String.format("commanded"));
 
             while (this.isAlive()) {
                 Thread.yield();
@@ -125,7 +123,7 @@ public class CommandProcessor {
                         } catch (IOException ex) {
                             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
                         }
-                    }).forEach(CommandProcessor::processCommand);
+                    }).forEach(CommandProcessor.this::processCommand);
                 } catch (Exception x) {
                     log.info(x.getMessage() + " in cmd handler");
                     log.log(Level.WARNING, x.getMessage(), x);

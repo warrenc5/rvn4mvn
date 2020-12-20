@@ -104,7 +104,7 @@ public class Commands {
 
                         i.next();
                         if (i.hasNext()) {
-                            NVV nvv = rvn.forProjectIndex(i.next());
+                            NVV nvv = project.forProjectIndex(i.next());
                             Config.of(nvv).showOutputMap.put(nvv, FALSE);
                             log.warning(String.format("hiding output for %1$s", nvv.toString()));
                             return TRUE;
@@ -127,7 +127,7 @@ public class Commands {
 
                 if (i.hasNext()) {
                     NVV nvv;
-                    Globals.config.showOutputMap.put(nvv = rvn.forProjectIndex(i.next()), TRUE);
+                    Globals.config.showOutputMap.put(nvv = project.forProjectIndex(i.next()), TRUE);
                     log.warning(String.format("showing output for %1$s", nvv.toString()));
                     return TRUE;
                 } else {
@@ -310,7 +310,9 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
-                    return paths.stream().filter(p -> buildPaths.containsKey(p)).filter(p -> p != null && pathWatcher.match(p, command)).map(p -> {
+                    return paths.stream()
+                            .filter(p -> buildPaths.containsKey(p))
+                            .filter(p -> p != null && pathWatcher.match(p, command)).map(p -> {
                         Hasher.getInstance().hashes.remove(p.toString());
                         try {
                             Globals.lastChangeFile = p;
@@ -365,7 +367,7 @@ public class Commands {
                         Duration timeout = Duration.ofSeconds(Integer.parseInt(i.next()));
                         if (i.hasNext()) {
                             NVV nvv;
-                            Globals.config.timeoutMap.put(nvv = rvn.forProjectIndex(i.next()), timeout);
+                            Globals.config.timeoutMap.put(nvv = project.forProjectIndex(i.next()), timeout);
                             log.warning(String.format("timeout for %1$s is %2$s second", nvv.toString(), timeout.toString()));
                             return TRUE;
                         } else {
@@ -392,7 +394,7 @@ public class Commands {
 
                 buildIt.stopAllBuilds();
 
-                rvn.executor.schedule(() -> {
+                buildIt.executor.schedule(() -> {
                     System.exit(0);
                 }, 1, TimeUnit.SECONDS);
                 return TRUE;
@@ -405,7 +407,7 @@ public class Commands {
                 log.info("resubmitting all scheduled builds");
 
                 futureMap.forEach((nvv, future) -> {
-                    rvn.executor.submit(() -> {
+                    buildIt.executor.submit(() -> {
                         future.cancel(true);
                         futureMap.remove(nvv);
                         buildIt.qBuild(nvv, nvv);

@@ -51,6 +51,7 @@ import static rvn.Globals.projects;
 import static rvn.Globals.properties;
 import static rvn.Globals.repoArtifact;
 import static rvn.Globals.toBuild;
+import static rvn.Util.between;
 import static rvn.Util.toStream;
 
 /**
@@ -68,7 +69,7 @@ public class Project {
         instance = new Project();
     }
 
-    public static Project getInstance() {
+    public static synchronized Project getInstance() {
         return instance;
     }
     private final PathWatcher pathWatcher;
@@ -78,12 +79,14 @@ public class Project {
     NVV lastNvv;
     private Path lastChangeFile;
     private final BuildIt buildIt;
+    private final Hasher hasher;
 
     public Project() {
         this.pathWatcher = PathWatcher.getInstance();
         this.configFactory = ConfigFactory.getInstance();
         this.eventWatcher = EventWatcher.getInstance();
         this.buildIt = BuildIt.getInstance();
+        this.hasher = Hasher.getInstance();
 
         pomFileNames = new ArrayList<>(Arrays.asList(new String[]{"pom.xml", "pom.yml", ".*.pom$"}));
     }
@@ -549,7 +552,7 @@ public class Project {
                 ).map(e -> e.getKey());
     }
 
-    private boolean isPom(Path path) {
+    boolean isPom(Path path) {
         return this.pomFileNames.stream().filter(s -> path.toAbsolutePath().toString().matches(s) || path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
@@ -613,9 +616,38 @@ public class Project {
         return bob.toString();
     }
 
+    public NVV forProjectIndex(String s) throws Exception {
+        int buildIndex = Integer.parseInt(s);
+        return forProjectIndex(buildIndex);
+    }
+
+    public NVV forProjectIndex(Integer s) throws Exception {
+
+        if (between(s, 0, buildIndex.size())) {
+            NVV nvv = buildIndex.get(s);
+            return nvv;
+        } else {
+            throw new Exception(s + " out of bounds ");
+        }
+    }
+
     public void updateIndex() {
         index = buildArtifact.keySet().stream().collect(Collectors.toList());
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
+    }
+
+    boolean needsBuild(NVV nvv) {
+        Optional<Path> bPath = buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+        Optional<Path> rPath = repoArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+
+        if (bPath.isPresent() && rPath.isEmpty()) {
+            log.finest("missing " + nvv.toString() + " " + bPath + " " + rPath);
+            return true;
+        } else if (bPath.isPresent() && rPath.isPresent()) {
+            return !hasher.compareHashes(bPath.get(), rPath.get());
+        } else {
+            return false;
+        }
     }
 
 }
