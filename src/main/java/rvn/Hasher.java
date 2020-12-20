@@ -94,7 +94,7 @@ public class Hasher {
     public void writeHashes() throws IOException {
 
         try {
-            FileOutputStream fos = new FileOutputStream(Config.hashConfig.toFile());
+            FileOutputStream fos = new FileOutputStream(Globals.hashConfig.toFile());
             ObjectOutputStream oos = new ObjectOutputStream(fos);
             oos.writeObject(this.hashes);
             fos.flush();
@@ -105,9 +105,9 @@ public class Hasher {
 
     public void readHashes() throws IOException {
 
-        if (Files.exists(Config.hashConfig)) {
+        if (Files.exists(Globals.hashConfig)) {
             try {
-                FileInputStream fis = new FileInputStream(Config.hashConfig.toFile());
+                FileInputStream fis = new FileInputStream(Globals.hashConfig.toFile());
                 ObjectInputStream ois = new ObjectInputStream(fis);
                 this.hashes = (Map<String, String>) ois.readObject();
             } catch (IOException x) {
@@ -116,7 +116,7 @@ public class Hasher {
                 log.warning("cnf " + x.getMessage());
             }
         } else {
-            log.info("no hashes found " + Config.hashConfig.toAbsolutePath());
+            log.info("no hashes found " + Globals.hashConfig.toAbsolutePath());
         }
     }
 

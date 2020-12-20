@@ -29,10 +29,11 @@ import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
-import static rvn.Config.userHome;
 import static rvn.Globals.baseConfig;
 import static rvn.Globals.buildArtifact;
+import static rvn.Globals.configFileNames;
 import static rvn.Globals.locations;
+import static rvn.Globals.userHome;
 import static rvn.PathWatcher.keys;
 
 /**
@@ -41,23 +42,28 @@ import static rvn.PathWatcher.keys;
  */
 public class ConfigFactory {
 
-    public static List<String> configFileNames;
     private PathWatcher pathWatcher;
 
     private static Rvn rvn = Rvn.getInstance();
     private static ConfigFactory instance;
 
     static {
-        instance = new ConfigFactory();
+        try {
+            instance = new ConfigFactory();
+        } catch (IOException ex) {
+            Logger.getLogger(ConfigFactory.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
 
     public static ConfigFactory getInstance() {
         return instance;
     }
 
-    public ConfigFactory() {
-        configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
+    private final Project project;
+
+    public ConfigFactory() throws IOException {
         pathWatcher = new PathWatcher();
+        project = Project.getInstance();
     }
 
     private Logger log = Logger.getLogger(this.getClass().getName());
@@ -83,53 +89,13 @@ public class ConfigFactory {
         return result;
     }
 
-    public Path loadConfiguration(Path path) {
+    Path loadConfiguration(Path path) {
         try {
             NVV nvv = null;
-            if (this.configFileNames.contains(path.getFileName().toString())) {
-                Path project = path.getParent().resolve("pom.xml");
-                if (project.toFile().exists()) {
-                    nvv = nvvFrom(project);
-                    log.fine("module configuration found for " + nvv);
-                }
-            }
-            URL configURL = path.toUri().toURL();
-            this.loadConfiguration(configURL, nvv);
-            log.info(String.format("watching %1$s for config changes", path.getParent()));
-            PathWatcher.getInstance().watch(path.getParent());
-            return path;
-        } catch (Exception ex) {
-            Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-            return null;
-        }
-    }
-
-    public void loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
-        String base = System.getProperty("rvn.config");
-        String name = base + File.separatorChar + "rvn.json";
-        //System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
-        if (base == null || base.trim().length() == 0) {
-            log.info("system property ${rvn.config} not set defaulting to " + name);
-        } else {
-            log.info("system property ${rvn.config} set " + base + ", resolving " + name);
-        }
-        URL configURL = null;
-        if (Files.exists(FileSystems.getDefault().getPath(name))) {
-            configURL = FileSystems.getDefault().getPath(name).toUri().toURL();
-        } else {
-            log.info("loading from classpath " + name);
-            configURL = Rvn.class.getResource(name);
-        }
-        this.config = this.loadConfiguration(Path.of(configURL.toURI()));
-    }
-
-    private Path loadConfiguration(Path path) {
-        try {
-            NVV nvv = null;
-            if (this.configFileNames.contains(path.getFileName().toString())) {
+            if (configFileNames.contains(path.getFileName().toString())) {
                 Path pomPath = path.getParent().resolve("pom.xml");
                 if (pomPath.toFile().exists()) {
-                    nvv = nvvFrom(pomPath);
+                    nvv = project.nvvFrom(pomPath);
                     log.fine("module configuration found for " + nvv);
                 }
             }
@@ -144,7 +110,7 @@ public class ConfigFactory {
         }
     }
 
-    private Config loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
+    Config loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
         String base = System.getProperty("rvn.config");
         String name = base + File.separatorChar + "rvn.json";
         //System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
@@ -160,7 +126,8 @@ public class ConfigFactory {
             log.info("loading from classpath " + name);
             configURL = Rvn.class.getResource(name);
         }
-        return this.loadConfiguration(Path.of(configURL.toURI()));
+        Path configPath = this.loadConfiguration(Path.of(configURL.toURI()));
+        return this.getConfig(configPath);
     }
 
     private Path loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
@@ -292,14 +259,14 @@ public class ConfigFactory {
             if (v.isArray()) {
                 List<String> commands = v.values().stream().map(e -> e.toString()).collect(Collectors.toList());
                 if (oNvv.isPresent()) {
-                    this.addCommand(oNvv.get().toString(), commands);
+                    config.addCommand(oNvv.get().toString(), commands);
                 }
             } else {
-                v.entrySet().forEach(e -> this.addCommand(e.getKey(), optionalArray(e.getValue())));
+                v.entrySet().forEach(e -> config.addCommand(e.getKey(), optionalArray(e.getValue())));
             }
 
             if (oNvv.isPresent()) {
-                log.fine("commands " + oNvv.toString() + " " + commands.get(oNvv.get().toString()));
+                log.fine("commands " + oNvv.toString() + " " + config.commands.get(oNvv.get().toString()));
             }
 
             log.fine(v.toString());
@@ -431,6 +398,7 @@ public class ConfigFactory {
             log.fine("add project specific settings");
 
         }
+        return config;
     }
 
     public void findConfiguration(String uri) {
@@ -444,9 +412,9 @@ public class ConfigFactory {
         try {
             if (Files.isDirectory(path)) {
                 try (final Stream<Path> stream = Files.list(path)) {
-                    stream.filter((child) -> Util.matchSafe(child)).forEach(this::findConfiguration);
+                    stream.filter((child) -> pathWatcher.matchSafe(child)).forEach(this::findConfiguration);
                 }
-            } else if (path.getFileName() != null && this.configFileNames.contains(path.getFileName().toString())) {
+            } else if (path.getFileName() != null && configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
             }
         } catch (IOException ex) {
@@ -454,9 +422,9 @@ public class ConfigFactory {
         }
     }
 
-    private boolean isConfigFile(Path path) throws IOException {
-        return (Files.exists(path) && Files.isSameFile(path, this.config))
-                || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+    boolean isConfigFile(Path path) throws IOException {
+        return (Files.exists(path) && Files.isSameFile(path, getConfig(path).configPath))
+                || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private void createConfiguration(Path config) throws IOException {
@@ -472,9 +440,12 @@ public class ConfigFactory {
 
     public Config getConfig(NVV nvv) {
         Path path = buildArtifact.get(nvv);
+        return getConfig(path);
+    }
+
+    public Config getConfig(Path path) {
         Path configPath = findMaximumPathMatch(path);
         return baseConfig.get(configPath);
-
     }
 
     private Path findMaximumPathMatch(Path path) {
@@ -501,6 +472,32 @@ public class ConfigFactory {
         ScriptEngine engine = manager.getEngineByName("JavaScript");
         return engine;
 
+    }
+
+    private void init() {
+    }
+
+    private void scan() {
+    }
+
+    public void toggleCommand(NVV nvv, String cmd) {
+        Config config = Config.of(nvv);
+
+        config.commands.entrySet().stream().filter(e -> project.matchNVV(nvv, e.getKey())).map(e -> e.getValue()).forEach(list
+                -> {
+            int i = list.indexOf(cmd);
+            if (i >= 0) {
+                list.set(i, this.toggleCommand(cmd));
+            }
+        });
+    }
+
+    public String toggleCommand(String cmd) {
+        if (cmd.startsWith("!")) {
+            return cmd.substring(1);
+        } else {
+            return "!" + cmd;
+        }
     }
 
 }

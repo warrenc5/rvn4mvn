@@ -52,7 +52,6 @@ import static rvn.Globals.buildArtifact;
 import static rvn.Globals.buildIndex;
 import static rvn.Globals.buildPaths;
 import static rvn.Globals.futureMap;
-import static rvn.Globals.index;
 import static rvn.Globals.logs;
 import static rvn.Globals.parent;
 import static rvn.Globals.processMap;
@@ -83,7 +82,7 @@ public class BuildIt extends Thread {
         });
     }
 
-    private void calculateToBuild() {
+    void calculateToBuild() {
 
         buildPaths.entrySet().stream().forEach(e -> {
             NVV nvv = e.getValue();
@@ -108,14 +107,14 @@ public class BuildIt extends Thread {
         });
     }
 
-    private void buildACommand(Integer i, String command) {
+    void buildACommand(Integer i, String command) {
 
         if (buildIndex.size() > i) {
             this.buildACommand(buildIndex.get(i), command);
         }
     }
 
-    private void buildACommand(NVV nvv, String command) {
+    void buildACommand(NVV nvv, String command) {
         this.lastChangeFile = null;
 
         if (command.equals("-")) {
@@ -138,7 +137,7 @@ public class BuildIt extends Thread {
         });
     }
 
-    private void buildAllCommands(Integer i) {
+    void buildAllCommands(Integer i) {
 
         lastChangeFile = null;
 
@@ -148,7 +147,7 @@ public class BuildIt extends Thread {
     }
     private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
 
-    private List<String> locateCommand(NVV nvv, Path path) {
+    List<String> locateCommand(NVV nvv, Path path) {
         log.info("locating commands " + nvv.toString());
         List<String> commandList = new ArrayList<>();
         if (lastChangeFile != null && iFinder.isJava(lastChangeFile)) {
@@ -199,7 +198,7 @@ public class BuildIt extends Thread {
         return matchNVV(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
     }
 
-    private void stopAllBuilds() {
+    void stopAllBuilds() {
         if (futureMap.isEmpty()) {
             log.warning("no future");
         } else {
@@ -215,7 +214,7 @@ public class BuildIt extends Thread {
         qBuild(nvv, nvv);
     }
 
-    private void qBuild(NVV nvv, NVV next) {
+    void qBuild(NVV nvv, NVV next) {
         log.warning("qbuild " + nvv);
 
         Path dir = buildArtifact.get(nvv);
@@ -244,7 +243,7 @@ public class BuildIt extends Thread {
 
     Graph<NVV> q = new Graph<>();
 
-    private synchronized void scheduleFuture(NVV nvv, boolean immediate) {
+    public synchronized void scheduleFuture(NVV nvv, boolean immediate) {
         Duration batchWait = immediate ? Duration.ZERO : ConfigFactory.getInstance().getConfig(nvv).batchWaitMap.getOrDefault(nvv, this.batchWait);
 
         futureMap.computeIfPresent(nvv, (nvv1, future) -> {
@@ -285,7 +284,7 @@ public class BuildIt extends Thread {
         });
     }
 
-    private synchronized void build(NVV nvv) {
+    synchronized void build(NVV nvv) {
         NVV pNvv = parent.get(nvv);
 
         if (pNvv != null && this.needsBuild(pNvv)) {
@@ -294,7 +293,7 @@ public class BuildIt extends Thread {
         qBuild(nvv);
     }
 
-    private synchronized void buildDeps(NVV nvv) {
+    public synchronized void buildDeps(NVV nvv) {
         log.info("requested to build " + nvv.toString());
         try {
             NVV pNvv = Globals.parent.get(nvv);
@@ -425,9 +424,10 @@ public class BuildIt extends Thread {
 
     private CompletableFuture<Boolean> doBuild(NVV nvv, String command, Path projectPath) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        String mvnCmd = Rvn.mvnCmdMap.getOrDefault(nvv, Rvn.this.mvnCmd);
-        String mvnOpts = Rvn.mvnOptsMap.getOrDefault(nvv, Rvn.this.mvnOpts);
-        String javaHome = Rvn.javaHomeMap.getOrDefault(nvv, Rvn.this.javaHome);
+        Config config = ConfigFactory.getInstance().getConfig(nvv);
+        String mvnCmd = config.mvnCmdMap.getOrDefault(nvv, Globals.config.mvnCmd);
+        String mvnOpts = config.mvnOptsMap.getOrDefault(nvv, Globals.config.mvnOpts);
+        String javaHome = config.javaHomeMap.getOrDefault(nvv, Globals.config.javaHome);
         String mvn = "mvn ";
         int commandIndex = calculateCommandIndex(nvv, command, projectPath);
         if (command.indexOf(mvn) >= 0 && command.indexOf("-f") == -1) {
@@ -456,7 +456,7 @@ public class BuildIt extends Thread {
         final String commandFinal = String.format(command, projectPath);
         String[] args = commandFinal.split(" ");
         final List<String> filtered = Arrays.stream(args).filter((s) -> s.trim().length() > 0).collect(Collectors.toList());
-        String settings = Rvn.settingsMap.getOrDefault(nvv, Rvn.this.settings);
+        String settings = config.settingsMap.getOrDefault(nvv, Globals.config.settings);
         log.info(settings);
         if (settings != null) {
             Path settingsPath = projectPath.getParent().resolve(Paths.get(settings));
@@ -487,7 +487,7 @@ public class BuildIt extends Thread {
                     Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage());
                 }
                 try {
-                    Rvn.this.thenStarted = Instant.now();
+                    this.thenStarted = Instant.now();
                     if (daemon) {
                         log.info("running in process " + filtered.toString());
                         archive = redirectOutput(nvv, commandIndex, null);
@@ -708,37 +708,6 @@ public class BuildIt extends Thread {
             p.descendants().forEach(ph -> ph.destroyForcibly());
         }
         log.info("destroyed " + p.info());
-    }
-
-    private void updateIndex() {
-        index = buildArtifact.keySet().stream().collect(Collectors.toList());
-        Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
-    }
-
-    private void addCommand(String projectKey, List<String> newCommandList) {
-        if (log.isLoggable(Level.FINEST)) {
-            log.finest("==" + projectKey + " " + newCommandList.toString() + " " + newCommandList.toString());
-        }
-
-        commands.compute(projectKey, (key, oldValue) -> {
-
-            List<String> newList = new ArrayList<>();
-            if (oldValue != null) {
-                newList.addAll(
-                        oldValue.stream()
-                                .filter(v -> oldValue.contains(v))
-                                .collect(Collectors.toList()));
-
-                List<String> newCommands = newCommandList.stream().filter(v -> !oldValue.contains(v))
-                        .collect(Collectors.toList());
-                newList.addAll(newCommands);
-            } else {
-                newList.addAll(newCommandList);
-            }
-            return newList;
-        });
-
-        log.fine(projectKey + "  " + commands.get(projectKey).toString());
     }
 
     private Path archiveOutput(NVV nvv, Callable<Path> archive) {

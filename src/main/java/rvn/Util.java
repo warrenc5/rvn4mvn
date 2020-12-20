@@ -1,9 +1,17 @@
 package rvn;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 /**
  *
@@ -13,7 +21,15 @@ public class Util {
 
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
 
-    private String prettyDuration(Duration d) {
+    static void logX(Logger log, IOException ex) {
+        log.log(Level.SEVERE, ex.getMessage(), ex);
+    }
+
+    static void log(Logger log, IOException ex) {
+        log.log(Level.SEVERE, ex.getMessage());
+    }
+
+    static String prettyDuration(Duration d) {
         if (d.toHours() > 24) {
             return d.toDays() + " days";
         }
@@ -62,13 +78,11 @@ public class Util {
     public static boolean between(int i, int min, int max) {
         return i >= min && i <= max;
     }
-
-    public static String toggleCommand(String cmd) {
-        if (cmd.startsWith("!")) {
-            return cmd.substring(1);
-        } else {
-            return "!" + cmd;
-        }
+    
+    public static Stream<Node> toStream(NodeList nodeList) {
+        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
+                Spliterator.ORDERED | Spliterator.NONNULL);
+        return StreamSupport.stream(splt, true);
     }
 
 }

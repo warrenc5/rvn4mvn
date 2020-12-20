@@ -4,15 +4,11 @@ package rvn;
 
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.io.PrintStream;
 import java.io.Reader;
 import java.io.Writer;
@@ -22,8 +18,6 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -31,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,14 +39,11 @@ import java.util.logging.LogManager;
 import java.util.logging.Logger;
 import java.util.regex.PatternSyntaxException;
 import static java.util.stream.Collectors.toList;
-import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import jdk.internal.org.jline.reader.LineReader;
 import jdk.internal.org.jline.reader.LineReaderBuilder;
 import jdk.internal.org.jline.terminal.Terminal;
 import jdk.internal.org.jline.terminal.TerminalBuilder;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
 import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_RESET;
@@ -62,7 +52,7 @@ import static rvn.Ansi.ANSI_YELLOW;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.buildIndex;
 import static rvn.Globals.repoArtifact;
-import static rvn.Project.expandNVVMatch;
+import static rvn.Util.between;
 
 /**
  *
@@ -75,11 +65,7 @@ public class Rvn extends Thread {
      * are commands for the project merge ` and `` command handlers. *
      * autoResume -rf module projects
      */
-    private Map<String, List<String>> commands;
-
     //TODO make these paths
-    private List<String> configFileNames;
-    private List<String> pomFileNames;
     List<CommandHandler> commandHandlers;
 
     private ImportFinder iFinder;
@@ -90,7 +76,7 @@ public class Rvn extends Thread {
     private Path config;
     boolean ee = false;
 
-    private static final String lockFileName = ".lock.rvn";
+    public static final String lockFileName = ".lock.rvn";
     private Map<NVV, String> lastCommand;
 
     private PrintStream out = System.out;
@@ -109,7 +95,7 @@ public class Rvn extends Thread {
     public static void main(String[] args) throws Exception {
         Logger.getAnonymousLogger().warning(ANSI_BOLD + ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
         Rvn rvn = new Rvn();
-        rvn.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
+        Globals.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
         rvn.start();
         rvn.processStdInOld();
         System.out.println(String.format("************** Exited ************************"));
@@ -117,17 +103,12 @@ public class Rvn extends Thread {
 
     private Duration timeout = Duration.ofSeconds(60);
 
-    private NVV lastNvv;
     private Instant thenFinished = null;
     private Instant thenStarted = null;
-    private Path lastChangeFile;
     private final BuildIt buildIt;
-    private Path hashConfig;
-
-    private String userHome = System.getProperty("user.home");
 
     ScheduledThreadPoolExecutor executor;
-    private String settings;
+    private final Project project;
 
     public Rvn() throws Exception {
         ThreadFactory tFactory = new ThreadFactory() {
@@ -154,26 +135,17 @@ public class Rvn extends Thread {
         });
 
         System.out.print(ANSI_RESET + ANSI_RESET + ANSI_WHITE);
-        try {
-            md = MessageDigest.getInstance("SHA-1");
-        } catch (NoSuchAlgorithmException e) {
-            log.warning(e.getMessage());
-        }
 
         init();
 
         buildIt = new BuildIt();
         buildIt.start();
+        project = Project.getInstance();
     }
 
     public void init() throws Exception {
 
         log.info(System.getProperties().toString());
-        hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
-        commands = new LinkedHashMap<>();
-        hashes = new HashMap<>();
-        configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
-        pomFileNames = new ArrayList<>(Arrays.asList(new String[]{"pom.xml", "pom.yml", ".*.pom$"}));
         thenFinished = Instant.now();
         thenStarted = Instant.now();
 
@@ -181,16 +153,16 @@ public class Rvn extends Thread {
 
         Hasher.getInstance().readHashes();
 
-        ConfigFactory.getInstance().loadDefaultConfiguration();
-
         URL location = Rvn.class.getProtectionDomain().getCodeSource().getLocation();
         System.out.println("Code in  " + location.getFile());
         System.out.println("Running in " + Paths.get(".").toAbsolutePath().normalize().toString());
-        this.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
+        Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
+
+        ConfigFactory.getInstance().loadDefaultConfiguration();
 
         commandHandlers = new ArrayList<>();
-        commandHandlers.addAll(new Commands().createCommandHandlers(this));
-        updateIndex();
+        //commandHandlers.addAll(new Commands().createCommandHandlers(this));
+        project.updateIndex();
 
     }
 
@@ -271,16 +243,6 @@ public class Rvn extends Thread {
         }
     }
 
-    private void toggleCommand(NVV nvv, String cmd) {
-        this.commands.entrySet().stream().filter(e -> this.matchNVV(nvv, e.getKey())).map(e -> e.getValue()).forEach(list
-                -> {
-            int i = list.indexOf(cmd);
-            if (i >= 0) {
-                list.set(i, this.toggleCommand(cmd));
-            }
-        });
-    }
-
     private boolean compareHashes(Path bPath, Path rPath) {
 
         if (bPath == null || rPath == null) {
@@ -311,135 +273,14 @@ public class Rvn extends Thread {
         }
     }
 
-    private Stream<Node> toStream(NodeList nodeList) {
-        Spliterator<Node> splt = Spliterators.spliterator(new NodeListIterator(nodeList), nodeList.getLength(),
-                Spliterator.ORDERED | Spliterator.NONNULL);
-        return StreamSupport.stream(splt, true);
-    }
-
     public Optional<String> getExtensionByStringHandling(String filename) {
         return Optional.ofNullable(filename).filter(f -> f.contains("."))
                 .map(f -> f.substring(filename.lastIndexOf(".") + 1));
     }
 
-    private boolean matchFiles(Path path) throws IOException {
-        return this.isConfigFile(path)
-                || matchFileIncludes.isEmpty() || (matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
-    }
-
-    private boolean matchDirectories(Path path) {
-        return matchDirIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !matchDirExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
-    }
-
-    private boolean matchNVV(NVV nvv) {
-        return matchArtifactIncludes.isEmpty() || (matchArtifactIncludes.stream().filter(s -> this.matchSafe(nvv, s)).findFirst().isPresent() // FIXME:
-                );
-        // absolutely
-        //&& !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent()); // FIXME:
-        // absolutely
-    }
-
-    private boolean matchSafe(Path path, String s) {
-
-        try {
-            return this.match(path, s);
-        } catch (PatternSyntaxException pse) {
-            log.warning(pse.getMessage() + " " + s);
-        }
-
-        return false;
-    }
-
-    public boolean match(Path path, String s) throws PatternSyntaxException {
-        s = ".*" + s + ".*";
-        boolean matches = path.toAbsolutePath().toString().matches(s)
-                || path.getFileName().toString().matches(s)
-                || path.getFileName().toString().equalsIgnoreCase(s);
-        if (matches) {
-            log.finest("matches path " + path.toString() + " " + s);
-        }
-        return matches;
-    }
-
-    public boolean matchSafe(NVV nvv, String s) {
-
-        try {
-            return this.match(nvv, s);
-        } catch (PatternSyntaxException pse) {
-            log.warning(pse.getMessage() + " " + s);
-        }
-
-        return false;
-    }
-
-    public boolean match(NVV nvv, String s) throws PatternSyntaxException {
-        boolean matches = nvv.toString().matches(s = expandNVVMatch(s));
-
-        if (matches) {
-            log.fine("matches artifact " + s + " " + nvv.toString());
-        } else {
-            log.finest("doesn't match artifact " + s + " " + nvv.toString());
-        }
-        return matches;
-    }
-
-    private boolean isNVV(String command) {
-        return command.matches(".*:.*");
-    }
-
-    private void writeHashes() throws IOException {
-
-        try {
-            FileOutputStream fos = new FileOutputStream(hashConfig.toFile());
-            ObjectOutputStream oos = new ObjectOutputStream(fos);
-            oos.writeObject(this.hashes);
-            fos.flush();
-        } catch (IOException x) {
-            log.info("write hashes " + x.getMessage());
-        }
-    }
-
-    private void readHashes() throws IOException {
-
-        if (Files.exists(hashConfig)) {
-            try {
-                FileInputStream fis = new FileInputStream(hashConfig.toFile());
-                ObjectInputStream ois = new ObjectInputStream(fis);
-                this.hashes = (Map<String, String>) ois.readObject();
-            } catch (IOException x) {
-                log.warning("read hashes " + x.getMessage());
-            } catch (ClassNotFoundException x) {
-                log.warning("cnf " + x.getMessage());
-            }
-        } else {
-            log.info("no hashes found " + hashConfig.toAbsolutePath());
-        }
-    }
-
-    public boolean matchSafe(Path child) {
-        try {
-            return (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
-        } catch (IOException ex) {
-            log.log(Level.SEVERE, ex.getMessage(), ex);
-            return false;
-        }
-    }
-
-    private String join(String o, String v) {
-        StringBuilder bob = new StringBuilder();
-        if (o != null) {
-            bob.append(o);
-            bob.append(" ");
-        }
-        bob.append(v);
-        return bob.toString();
-    }
-
     private boolean isConfigFile(Path path) throws IOException {
         return (Files.exists(path) && Files.isSameFile(path, this.config))
-                || this.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+                || Globals.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private void createConfiguration(Path config) throws IOException {
@@ -458,11 +299,11 @@ public class Rvn extends Thread {
         System.setErr(err);
     }
 
-    private void writeFileToStdout(Path tp) throws FileNotFoundException, IOException {
+    void writeFileToStdout(Path tp) throws FileNotFoundException, IOException {
         this.writeFileToStdout(tp.toFile());
     }
 
-    private void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
+    void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
         if (tf != null) {
             try (FileReader reader = new FileReader(tf)) {
                 char c[] = new char[1024];

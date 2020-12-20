@@ -1,8 +1,11 @@
 package rvn;
 
+import java.io.File;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -26,6 +29,7 @@ public class Globals {
     public static List<NVV> index;
     public static List<NVV> toBuild;
     public static Map<Path, NVV> buildPaths;
+    public static List<String> configFileNames = new ArrayList<>(Arrays.asList(new String[]{".rvn", ".rvn.json"}));
 
     public static Map<NVV, FileTime> lastBuild;
     public static Map<NVV, FileTime> lastUpdate;
@@ -46,6 +50,17 @@ public class Globals {
     public static Map<Path, Process> processMap;
     public static Map<NVV, Future> futureMap;
     public static Map<Integer, String> previousCmdIdx;
+
+    public static NVV lastNvv;
+    public static Path lastFile;
+    public static Path lastChangeFile;
+
+    public static Path configPath;
+    public static Config config;
+
+    public static final String userHome = System.getProperty("user.home");
+    public static final String lockFileName = ".lock.rvn";
+    public static Path hashConfig = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
 
     public static void rehash() {
 

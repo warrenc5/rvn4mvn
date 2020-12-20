@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilder;
@@ -41,12 +44,14 @@ import static rvn.Globals.agProjects;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.buildIndex;
 import static rvn.Globals.buildPaths;
+import static rvn.Globals.configFileNames;
 import static rvn.Globals.index;
 import static rvn.Globals.parent;
 import static rvn.Globals.projects;
 import static rvn.Globals.properties;
 import static rvn.Globals.repoArtifact;
 import static rvn.Globals.toBuild;
+import static rvn.Util.toStream;
 
 /**
  *
@@ -66,6 +71,22 @@ public class Project {
     public static Project getInstance() {
         return instance;
     }
+    private final PathWatcher pathWatcher;
+    private final ConfigFactory configFactory;
+    private EventWatcher eventWatcher;
+    private List<String> pomFileNames;
+    NVV lastNvv;
+    private Path lastChangeFile;
+    private final BuildIt buildIt;
+
+    public Project() {
+        this.pathWatcher = PathWatcher.getInstance();
+        this.configFactory = ConfigFactory.getInstance();
+        this.eventWatcher = EventWatcher.getInstance();
+        this.buildIt = BuildIt.getInstance();
+
+        pomFileNames = new ArrayList<>(Arrays.asList(new String[]{"pom.xml", "pom.yml", ".*.pom$"}));
+    }
 
     private void processPathSafe(String uri) {
         try {
@@ -83,28 +104,28 @@ public class Project {
         this.processPath(uri, false);
     }
 
-    private void processPath(String uri, boolean immediate) throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
+    void processPath(String uri, boolean immediate) throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
         log.fine("in ->" + uri);
         Path path = Paths.get(uri);
         processPath(path, immediate);
     }
 
-    private void processPath(Path path)
+    void processPath(Path path)
             throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
         this.processPath(path, false);
     }
 
-    private void processPath(Path path, boolean immediate)
+    void processPath(Path path, boolean immediate)
             throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
         if (!Files.isRegularFile(path)) {
             return;
         }
 
-        if (!matchFiles(path)) {
+        if (!pathWatcher.matchFiles(path)) {
             return;
         }
 
-        boolean skipHash = !path.endsWith("pom.xml") || isConfigFile(path);
+        boolean skipHash = !path.endsWith("pom.xml") || configFactory.isConfigFile(path);
 
         if (!skipHash
                 && Hasher.getInstance().update(path)) {
@@ -120,10 +141,10 @@ public class Project {
 
             log.info(String.format("nvv: %1$s %2$s", path, nvv));
             if (matchNVV(nvv, path)) {
-                buildDeps(nvv);
+                buildIt.buildDeps(nvv);
             }
             return;
-        } else if (this.configFileNames.contains(path.getFileName().toString())) {
+        } else if (configFileNames.contains(path.getFileName().toString())) {
             NVV nvv = findPom(path);
 
             if (nvv == null) {
@@ -152,7 +173,7 @@ public class Project {
                 if (this.lastChangeFile == null) {
                     this.lastChangeFile = path;
                 }
-                processChange(nvv, path, immediate);
+                eventWatcher.processChange(nvv, path, immediate);
                 log.info(String.format("change triggered by config: %1$s %2$s", path, nvv));
             } else {
                 log.info(String.format("change excluded by config: %1$s %2$s", path, nvv));
@@ -222,14 +243,16 @@ public class Project {
         boolean updated = Hasher.getInstance().update(path);
         if (updated) {
             log.warning(String.format("%1$s already changed", nvv));
-            buildDeps(nvv);
+            buildIt.buildDeps(nvv);
         }
 
         NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
 
         Stream<Node> stream = toStream(nodeList);
 
-        if (processPluginMap.getOrDefault(nvv, processPlugin)) {
+        Config config = configFactory.getConfig(path);
+
+        if (config.processPluginMap.getOrDefault(nvv, Globals.config.processPlugin)) {
             nodeList = (NodeList) xPath.compile("//plugin").evaluate(xmlDocument, XPathConstants.NODESET);
             stream = Stream.concat(stream, toStream(nodeList));
         }
@@ -259,8 +282,9 @@ public class Project {
     }
 
     private NVV processDependency(Node n, NVV proj) {
+        Config config = configFactory.getConfig(proj);
 
-        if (!this.processPluginMap.getOrDefault(proj, processPlugin) && n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
+        if (!config.processPluginMap.getOrDefault(proj, Globals.config.processPlugin) && n.getParentNode().getParentNode().getNodeName().equals("plugin")) {
             return null;
         }
 
@@ -291,7 +315,7 @@ public class Project {
         return parentNvv;
     }
 
-    private NVV nvvFrom(Path path)
+    public NVV nvvFrom(Path path)
             throws XPathExpressionException, SAXException, IOException, ParserConfigurationException {
         Document xmlDocument = loadPom(path);
         return nvvFrom(xmlDocument).with(path);
@@ -477,11 +501,45 @@ public class Project {
 
     private boolean matchNVV(NVV nvv, Path path) {
         try {
-            return matchNVV(nvv) && matchFiles(path);
+            return matchNVV(nvv) && pathWatcher.matchFiles(path);
         } catch (IOException ex) {
             log.warning(ex.getMessage());
             return false;
         }
+    }
+
+    public boolean matchNVV(NVV nvv) {
+        Config config = configFactory.getConfig(nvv);
+        return config.matchArtifactIncludes.isEmpty() || (config.matchArtifactIncludes.stream().filter(s -> this.matchSafe(nvv, s)).findFirst().isPresent());// FIXME:
+        // absolutely
+        //&& !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent()); // FIXME:
+        // absolutely
+    }
+
+    public boolean matchSafe(NVV nvv, String s) {
+
+        try {
+            return this.match(nvv, s);
+        } catch (PatternSyntaxException pse) {
+            log.warning(pse.getMessage() + " " + s);
+        }
+
+        return false;
+    }
+
+    public boolean match(NVV nvv, String s) throws PatternSyntaxException {
+        boolean matches = nvv.toString().matches(s = expandNVVMatch(s));
+
+        if (matches) {
+            log.fine("matches artifact " + s + " " + nvv.toString());
+        } else {
+            log.finest("doesn't match artifact " + s + " " + nvv.toString());
+        }
+        return matches;
+    }
+
+    public static boolean isNVV(String command) {
+        return command.matches(".*:.*");
     }
 
     Stream<NVV> projectDepends(NVV nvv) {
@@ -553,6 +611,11 @@ public class Project {
 
         slog.finest(s + "->" + bob.toString());
         return bob.toString();
+    }
+
+    public void updateIndex() {
+        index = buildArtifact.keySet().stream().collect(Collectors.toList());
+        Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
     }
 
 }

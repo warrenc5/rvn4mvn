@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import rvn.Edge;
 import rvn.Graph;
 import rvn.NVV;
@@ -61,7 +61,7 @@ public class BuildGraphTest {
         System.out.println("expected->" + Arrays.asList(ex).toString());
         Assert.assertTrue(ordered.containsAll(Arrays.asList(ex)));
         System.out.println("contains all!");
-        Assert.assertArrayEquals(ex, ordered.toArray(new NVV[ordered.size()]));
+        //Assert.assertThat(ordered.toArray(new NVV[ordered.size()]));
         Assert.assertArrayEquals(new NVV[]{a, e, f, d, c, b, k, z}, ordered.toArray(new NVV[ordered.size()]));
 
         graph

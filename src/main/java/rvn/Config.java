@@ -5,15 +5,17 @@
  */
 package rvn;
 
-import java.io.File;
 import static java.lang.Boolean.FALSE;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 /**
  *
@@ -21,17 +23,16 @@ import java.util.Map;
  */
 public class Config {
 
-    public static final String userHome = System.getProperty("user.home");
-    public static final String lockFileName = ".lock.rvn";
-    public static Path hashConfig = Paths.get(Config.userHome + File.separator + ".m2" + File.separator + "rvn.hashes");
+    private Logger log = Logger.getLogger(this.getClass().getName());
 
-    public static Object of(NVV nvv) {
+    public static Config of(NVV nvv) {
         return ConfigFactory.getInstance().getConfig(nvv);
     }
 
     public String mvnCmd;
     public Boolean showOutput = true;
     public Boolean interrupt;
+    public String settings;
     public Boolean reuseOutput;
     public Boolean daemon = false;
     public Boolean processPlugin = false;
@@ -39,7 +40,9 @@ public class Config {
     public String javaHome;
     public String mvnArgs;
     public Duration batchWait;
+    public Duration timeout;
 
+    public Map<String, List<String>> commands;
     public Map<NVV, String> lastCommand;
 
     public Map<NVV, String> mvnCmdMap;
@@ -61,6 +64,7 @@ public class Config {
     public List<String> matchDirExcludes;
     public List<String> matchArtifactIncludes;
     public List<String> matchArtifactExcludes;
+    public Path configPath;
 
     public Config() {
         init();
@@ -88,13 +92,40 @@ public class Config {
         daemonMap = new HashMap<>();
         processPluginMap = new HashMap<>();
 
-        matchFileIncludes = new ArrayList<>(ConfigFactory.configFileNames);
+        matchFileIncludes = new ArrayList<>(Globals.configFileNames);
         matchFileExcludes = new ArrayList<>();
         matchDirIncludes = new ArrayList<>();
         matchDirExcludes = new ArrayList<>();
         matchArtifactIncludes = new ArrayList<>();
         matchArtifactExcludes = new ArrayList<>();
 
+        commands = new LinkedHashMap<>();
+    }
+
+    public void addCommand(String projectKey, List<String> newCommandList) {
+        if (log.isLoggable(Level.FINEST)) {
+            log.finest("==" + projectKey + " " + newCommandList.toString() + " " + newCommandList.toString());
+        }
+
+        commands.compute(projectKey, (key, oldValue) -> {
+
+            List<String> newList = new ArrayList<>();
+            if (oldValue != null) {
+                newList.addAll(
+                        oldValue.stream()
+                                .filter(v -> oldValue.contains(v))
+                                .collect(Collectors.toList()));
+
+                List<String> newCommands = newCommandList.stream().filter(v -> !oldValue.contains(v))
+                        .collect(Collectors.toList());
+                newList.addAll(newCommands);
+            } else {
+                newList.addAll(newCommandList);
+            }
+            return newList;
+        });
+
+        log.fine(projectKey + "  " + commands.get(projectKey).toString());
     }
 
 }

@@ -1,11 +1,9 @@
 package rvn;
 
 import java.io.IOException;
-import java.nio.file.AccessDeniedException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
@@ -28,13 +26,12 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPathExpressionException;
 import org.xml.sax.SAXException;
-import static rvn.Ansi.ANSI_GREEN;
-import static rvn.Ansi.ANSI_RED;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.buildArtifact;
@@ -71,7 +68,11 @@ public class PathWatcher extends Thread {
     private Instant thenStarted = null;
 
     static {
-        instance = new PathWatcher();
+        try {
+            instance = new PathWatcher();
+        } catch (IOException ex) {
+            Logger.getLogger(PathWatcher.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
 
     public static PathWatcher getInstance() {
@@ -79,7 +80,7 @@ public class PathWatcher extends Thread {
     }
     private final ConfigFactory configFactory;
 
-    public PathWatcher() {
+    public PathWatcher() throws IOException {
         watcher = FileSystems.getDefault().newWatchService();
         configFactory = ConfigFactory.getInstance();
 
@@ -131,15 +132,19 @@ public class PathWatcher extends Thread {
             keyPath.put(key, dir);
             log.fine(String.format("watching %1$s %2$d", dir, key.hashCode()));
         } catch (IOException x) {
-            System.err.println("watch " + x.getMessage());
+            Util.log(log, x);
         }
     }
 
     public void run() {
-        //scan();
+        try {
+            scan(Globals.locations);
+        } catch (IOException ex) {
+            Util.log(log, ex);
+        }
     }
 
-    public void scan(List<String> locations) {
+    public void scan(Set<String> locations) throws IOException {
         locations.stream().forEach(configFactory::findConfiguration);
         log.fine("locations :" + locations.toString().replace(',', '\n'));
         locations.stream().forEach(this::registerPath);
@@ -160,8 +165,7 @@ public class PathWatcher extends Thread {
 
         BuildIt.getInstance().calculateToBuild();
 
-        this.iFinder = new ImportFinder(this.paths);
-
+        //this.iFinder = new ImportFinder(this.paths);
         watchSummary();
     }
 
@@ -213,44 +217,6 @@ public class PathWatcher extends Thread {
         }
     }
 
-    public void registerPath(String uri) {
-        Path dir = Paths.get(uri);
-        log.info(String.format(ANSI_WHITE + "watching %1$s" + ANSI_RESET, dir));
-        registerPath(dir);
-    }
-
-    public void registerPath(Path path) {
-        try {
-            log.finest(path.toString());
-            if (Files.isDirectory(path)) {
-                try (Stream<Path> stream = Files.list(path)) {
-                    stream.sorted().filter(child -> matchSafe(child)).forEach(this::registerPath);
-                }
-            } else if (path.toFile().toString().endsWith(".pom")) {
-                Optional<FileTime> lastest = watchRecursively(path.getParent().getParent()); // watch all versions
-
-                Optional<NVV> oNvv = Project.getInstance().processPom(path);
-                if (oNvv.isPresent() && lastest.isPresent()) {
-                    lastBuild.put(oNvv.get(), lastest.get());
-                }
-            } else if (path.endsWith("pom.xml")) {
-                Optional<NVV> oNvv = Project.getInstance().processPom(path);
-                if (oNvv.isPresent()) {
-                    Path parent = path.getParent();
-                    Optional<FileTime> lastest = watchRecursively(parent);
-                    lastUpdate.put(oNvv.get(), lastest.get());
-                } else {
-                    // logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
-                }
-            } else {
-                this.paths.add(path);
-            }
-        } catch (IOException | SAXException | XPathExpressionException | ParserConfigurationException ex) {
-            log.info(
-                    String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
-        }
-    }
-
     public void watchSummary() {
         Duration duration = Duration.between(thenFinished, Instant.now());
         log.info(String.format(ANSI_WHITE + "watching %1$s projects, %2$s builds, %3$s are out of date,  %4$s keys - all in %5$s" + ANSI_RESET,
@@ -274,56 +240,53 @@ public class PathWatcher extends Thread {
         return child;
     }
 
-    private synchronized void processEvent(Path child, WatchEvent.Kind<?> kind) {
+    private boolean matchDirectories(Path path) {
+        Config config = this.configFactory.getConfig(path);
+        return this.matchDirectories(config, path);
+    }
+
+    private boolean matchDirectories(Config config, Path path) {
+        return config.matchDirIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !config.matchDirExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+    }
+
+    public boolean matchSafe(Path child) {
         try {
-
-            if (log.isLoggable(Level.INFO)) {
-                log.info(String.format("kind %1$s %2$s ", kind, child));
-            }
-            if (child == null) {
-                return;
-            }
-
-            if (child.equals(Config.hashConfig)) {
-                return;
-            }
-
-            if (child.endsWith(Config.lockFileName)) {
-                return;
-            }
-
-            if (child.equals(config) || this.isConfigFile(child)) {
-                try {
-                    log.info(ANSI_RED + "config changed " + ANSI_GREEN + child + ANSI_RESET);
-                    this.reloadConfiguration();
-                } catch (Throwable ex) {
-                    log.log(Level.SEVERE, ex.getMessage(), ex);
-                }
-                return;
-            }
-
-            if (kind == ENTRY_DELETE) {
-                Optional<WatchKey> cancelKey = keyPath.entrySet().stream()
-                        .filter(e -> child.equals(e.getValue())).map(e -> e.getKey()).findFirst();
-                if (cancelKey.isPresent()) {
-                    cancelKey.get().cancel();
-                }
-                // TODO remove from buildArtifacts
-                updateIndex();
-            } else if (kind == ENTRY_CREATE) {
-                watcher.registerPath(child);
-                updateIndex();
-            } else if (kind == ENTRY_MODIFY) {
-                Project.getInstance().processPath(child);
-            }
-
-        } catch (AccessDeniedException ex) {
-            log.log(Level.INFO, ex.getMessage());
-        } catch (NoSuchFileException ex) {
-            log.log(Level.INFO, ex.getMessage());
-        } catch (Exception ex) {
+            return (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
+        } catch (IOException ex) {
             log.log(Level.SEVERE, ex.getMessage(), ex);
+            return false;
         }
     }
+
+    private boolean matchSafe(Path path, String s) {
+
+        try {
+            return this.match(path, s);
+        } catch (PatternSyntaxException pse) {
+            log.warning(pse.getMessage() + " " + s);
+        }
+
+        return false;
+    }
+
+    public boolean match(Path path, String s) throws PatternSyntaxException {
+        s = ".*" + s + ".*";
+        boolean matches = path.toAbsolutePath().toString().matches(s)
+                || path.getFileName().toString().matches(s)
+                || path.getFileName().toString().equalsIgnoreCase(s);
+        if (matches) {
+            log.finest("matches path " + path.toString() + " " + s);
+        }
+        return matches;
+    }
+
+    boolean matchFiles(Path path) throws IOException {
+        Config config = configFactory.getConfig(path);
+        return configFactory.isConfigFile(path)
+                || config.matchFileIncludes.isEmpty() || (config.matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !config.matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
+    }
+    
 
 }

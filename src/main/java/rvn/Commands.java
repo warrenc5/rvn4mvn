@@ -24,7 +24,6 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import static org.codehaus.plexus.util.SelectorUtils.match;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_PURPLE;
@@ -33,10 +32,18 @@ import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.buildIndex;
+import static rvn.Globals.buildPaths;
+import static rvn.Globals.config;
+import static rvn.Globals.failMap;
+import static rvn.Globals.futureMap;
 import static rvn.Globals.lastBuild;
+import static rvn.Globals.lastFile;
+import static rvn.Globals.logs;
+import static rvn.Globals.paths;
+import static rvn.Globals.previousCmdIdx;
 import static rvn.Globals.toBuild;
+import static rvn.Util.prettyDuration;
 import static rvn.Util.rangeToIndex;
-import static sun.tools.jar.Manifest.hashes;
 
 /**
  *
@@ -45,9 +52,24 @@ import static sun.tools.jar.Manifest.hashes;
 public class Commands {
 
     //private Logger log = Logger.getLogger(Commands.class.getName());
-    private static Logger log = Logger.getLogger(Commands.class.getName());
+    private static final Logger log = Logger.getLogger(Commands.class.getName());
+    private final Project project;
+    private final EventWatcher eventWatcher;
+    private final ConfigFactory configFactory;
+    private final Hasher hasher;
+    private final BuildIt buildIt;
+    private PathWatcher pathWatcher;
 
-    public static List<CommandHandler> createCommandHandlers(final Rvn rvn, CommandProcessor processor) {
+    public Commands() {
+        this.eventWatcher = EventWatcher.getInstance();
+        this.project = Project.getInstance();
+        this.hasher = Hasher.getInstance();
+        this.configFactory = ConfigFactory.getInstance();
+        this.buildIt = BuildIt.getInstance();
+        pathWatcher = PathWatcher.getInstance();
+    }
+
+    public List<CommandHandler> createCommandHandlers(final Rvn rvn, CommandProcessor processor) {
 
         List<CommandHandler> commandHandlers = new ArrayList<>();
 
@@ -66,7 +88,7 @@ public class Commands {
         commandHandlers.add(
                 new CommandHandler("!", "!", "Stop the current build. Leave the build queue in place", (command) -> {
                     if (command.equals("!")) {
-                        rvn.stopAllBuilds();
+                        buildIt.stopAllBuilds();
                         return TRUE;
                     }
                     return FALSE;
@@ -87,8 +109,8 @@ public class Commands {
                             log.warning(String.format("hiding output for %1$s", nvv.toString()));
                             return TRUE;
                         } else {
-                            rvn.config.showOutput = false;
-                            log.info((rvn.config.showOutput) ? "showing output" : "hiding output");
+                            Globals.config.showOutput = false;
+                            log.info((Globals.config.showOutput) ? "showing output" : "hiding output");
                             return TRUE;
                         }
                     }
@@ -105,12 +127,12 @@ public class Commands {
 
                 if (i.hasNext()) {
                     NVV nvv;
-                    rvn.showOutputMap.put(nvv = rvn.forProjectIndex(i.next()), TRUE);
+                    Globals.config.showOutputMap.put(nvv = rvn.forProjectIndex(i.next()), TRUE);
                     log.warning(String.format("showing output for %1$s", nvv.toString()));
                     return TRUE;
                 } else {
-                    rvn.showOutput = true;
-                    log.info((rvn.showOutput) ? "showing output" : "hiding output");
+                    Globals.config.showOutput = true;
+                    log.info((Globals.config.showOutput) ? "showing output" : "hiding output");
                     return TRUE;
                 }
             }
@@ -151,10 +173,11 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler(".", ".", "Repeat last change that triggered a build.", (command) -> {
             if (command.equals(".")) {
+                NVV lastNvv = Project.getInstance().lastNvv;
                 if (lastNvv != null) {
-                    Path path = this.buildArtifact.get(lastNvv);
-                    String remove = hashes.remove(path.toString());
-                    processChange(lastNvv);
+                    Path path = Globals.buildArtifact.get(lastNvv);
+                    String remove = hasher.hashes.remove(path.toString());
+                    eventWatcher.processChange(lastNvv);
                 }
                 return TRUE;
             }
@@ -164,7 +187,7 @@ public class Commands {
         commandHandlers
                 .add(new CommandHandler("!!", "!!", "Stop the current build. Drain out the build queue.", (command) -> {
                     if (command.equals("!!")) {
-                        rvn.stopAllBuilds();
+                        BuildIt.getInstance().stopAllBuilds();
                         return TRUE;
                     }
                     return FALSE;
@@ -172,9 +195,9 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler(">", ">", "Show the fail map.", (command) -> {
             if (command.equals(">")) {
-                rvn.index.stream().filter(nvv -> rvn.failMap.containsKey(nvv)).filter(nvv -> failMap.get(nvv) != null)
+                Globals.index.stream().filter(nvv -> failMap.containsKey(nvv)).filter(nvv -> failMap.get(nvv) != null)
                         .forEach(nvv -> {
-                            log.info(String.format(ANSI_GREEN + "%1$s " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(nvv), nvv, rvn.failMap.get(nvv)));
+                            log.info(String.format(ANSI_GREEN + "%1$s " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET, buildIndex.indexOf(nvv), nvv, failMap.get(nvv)));
                         });
                 return TRUE;
             }
@@ -184,8 +207,8 @@ public class Commands {
         commandHandlers.add(new CommandHandler(">[0-9]", ">1", "Show the fail map entry.", (command) -> {
             if (command.matches(">[0-9]+")) {
                 Integer i = Integer.valueOf(command.substring(1));
-                NVV nvv = rvn.buildIndex.get(i);
-                Path fail = rvn.failMap.get(nvv);
+                NVV nvv = Globals.buildIndex.get(i);
+                Path fail = Globals.failMap.get(nvv);
                 try {
                     rvn.writeFileToStdout(fail);
                 } catch (IOException ex) {
@@ -199,8 +222,8 @@ public class Commands {
                 .add(new CommandHandler("@", "@", "Reload the configuration file and rescan filesystem.", (command) -> {
                     if (command.equals("@")) {
                         try {
-                            this.commands.clear();
-                            this.reloadConfiguration();
+                            Globals.config.commands.clear();
+                            ConfigFactory.getInstance().reloadConfiguration();
                         } catch (Exception ex) {
                             log.warning("reload " + ex.getMessage());
                         }
@@ -227,7 +250,7 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("\\\\", "\\\\", "Build all yet to build list", (command) -> {
             if (command.trim().equals("\\\\")) {
-                toBuild.stream().forEach(nvv -> this.build(nvv));
+                Globals.toBuild.stream().forEach(nvv -> BuildIt.getInstance().build(nvv));
                 return TRUE;
             }
             return FALSE;
@@ -236,7 +259,7 @@ public class Commands {
         commandHandlers.add(new CommandHandler("##", "##", "Clear all hashes", (command) -> {
             if (command.trim().equals("##")) {
 
-                Hasher.getInstance().hashes.clear();
+                hasher.hashes.clear();
                 return TRUE;
             }
             return FALSE;
@@ -245,7 +268,7 @@ public class Commands {
         commandHandlers.add(new CommandHandler("#", "#", "Build all projects outdated by hashes", (command) -> {
             if (command.trim().equals("#")) {
 
-                this.hashes.forEach((k, v) -> {
+                hasher.hashes.forEach((k, v) -> {
                     try {
                         Project.getInstance().processPath(k, true);
                     } catch (Exception ex) {
@@ -259,11 +282,12 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("=", "=:test:", "List build commands for project", (command) -> {
             if (command.startsWith("=")) {
+                //TODO: make config based somehow.
 
-                log.info(this.commands.keySet().stream()
-                        .filter(i -> matchNVV(i, command.length() == 1 ? ".*" : command.substring(1)))
+                log.info(config.commands.keySet().stream()
+                        .filter(i -> project.matchNVV(i, command.length() == 1 ? ".*" : command.substring(1)))
                         .map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
-                        this.commands.get(i).stream()
+                        config.commands.get(i).stream()
                                 .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
@@ -275,9 +299,9 @@ public class Commands {
         commandHandlers.add(new CommandHandler("[groupId]:[artifactId]:[version]", ":test: mygroup:",
                 "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
                 (command) -> {
-                    if (isNVV(command)) {
-                        buildArtifact.keySet().stream().filter(n -> matchNVV(n, command)).forEach(n -> {
-                            lastNvv = .processChange(n);
+                    if (Project.isNVV(command)) {
+                        buildArtifact.keySet().stream().filter(n -> project.matchNVV(n, command)).forEach(n -> {
+                            Globals.lastNvv = eventWatcher.processChange(n);
                         });
                         return TRUE;
                     }
@@ -286,10 +310,10 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
-                    return paths.stream().filter(p -> this.buildPaths.containsKey(p)).filter(p -> p != null && this.match(p, command)).map(p -> {
+                    return paths.stream().filter(p -> buildPaths.containsKey(p)).filter(p -> p != null && pathWatcher.match(p, command)).map(p -> {
                         Hasher.getInstance().hashes.remove(p.toString());
                         try {
-                            this.lastChangeFile = p;
+                            Globals.lastChangeFile = p;
                             Project.getInstance().processPath(p, true);
                         } catch (Exception ex) {
                             log.warning("path " + ex.getMessage());
@@ -341,11 +365,11 @@ public class Commands {
                         Duration timeout = Duration.ofSeconds(Integer.parseInt(i.next()));
                         if (i.hasNext()) {
                             NVV nvv;
-                            rvn.timeoutMap.put(nvv = rvn.forProjectIndex(i.next()), timeout);
+                            Globals.config.timeoutMap.put(nvv = rvn.forProjectIndex(i.next()), timeout);
                             log.warning(String.format("timeout for %1$s is %2$s second", nvv.toString(), timeout.toString()));
                             return TRUE;
                         } else {
-                            rvn.timeout = timeout;
+                            Globals.config.timeout = timeout;
                             log.warning(String.format("timeout is %1$s second", timeout.toString()));
                             return TRUE;
                         }
@@ -354,8 +378,8 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
             if (command.trim().equals("/")) {
-                rvn.failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
-                    rvn.build(e.getKey());
+                Globals.failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
+                    BuildIt.getInstance().build(e.getKey());
                 });
                 return TRUE;
             }
@@ -366,7 +390,7 @@ public class Commands {
             if (command.trim().equalsIgnoreCase("q")) {
                 log.info("blitzkreik");
 
-                rvn.stopAllBuilds();
+                buildIt.stopAllBuilds();
 
                 rvn.executor.schedule(() -> {
                     System.exit(0);
@@ -381,10 +405,10 @@ public class Commands {
                 log.info("resubmitting all scheduled builds");
 
                 futureMap.forEach((nvv, future) -> {
-                    this.executor.submit(() -> {
+                    rvn.executor.submit(() -> {
                         future.cancel(true);
                         futureMap.remove(nvv);
-                        qBuild(nvv, nvv);
+                        buildIt.qBuild(nvv, nvv);
                         return null;
                     });
                 });
@@ -396,7 +420,7 @@ public class Commands {
         commandHandlers.add(new CommandHandler("`", "`[:test:|#]",
                 "List known project(s) matching coordinate or path expression.", (command) -> {
                     if (command.startsWith("`") && !command.equals("``")) {
-                        updateIndex();
+                        project.updateIndex();
                         String nvvMatch = command.substring(1);
                         if (nvvMatch.isBlank()) {
                             nvvMatch = ".*";
@@ -404,15 +428,15 @@ public class Commands {
                         final String match = nvvMatch;
 
                         List<NVV> selected = buildArtifact.entrySet().stream()
-                                .filter(e -> matchNVV(e.getKey(), match) || match(e.getValue(), match)).map(e -> e.getKey()).collect(Collectors.toList());
+                                .filter(e -> project.matchNVV(e.getKey(), match) || pathWatcher.match(e.getValue(), match)).map(e -> e.getKey()).collect(Collectors.toList());
 
                         log.info(selected.stream()
-                                .sorted((nvv1, nvv2) -> Integer.compare(this.buildIndex.indexOf(nvv1), this.buildIndex.indexOf(nvv2)))
-                                .map(i -> String.format(((this.toBuild.indexOf(i)) >= 0 ? (ANSI_RED + "*") : " ")
+                                .sorted((nvv1, nvv2) -> Integer.compare(buildIndex.indexOf(nvv1), buildIndex.indexOf(nvv2)))
+                                .map(i -> String.format(((toBuild.indexOf(i)) >= 0 ? (ANSI_RED + "*") : " ")
                                 + ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
                                 buildIndex.indexOf(i), i, buildArtifact.get(i)))
                                 .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
-                        watchSummary();
+                        this.pathWatcher.watchSummary();
                         return TRUE;
                     }
                     return FALSE;
@@ -427,23 +451,23 @@ public class Commands {
                     return Boolean.FALSE;
                 }
                 Integer index = Integer.parseInt(matcher.group(1));
-                if (this.buildIndex.size() <= index) {
+                if (Globals.buildIndex.size() <= index) {
                     log.info("not enough commands" + index);
                     return TRUE;
                 }
-                NVV nvv = this.buildIndex.get(index);
+                NVV nvv = buildIndex.get(index);
                 Integer cmdIndex = null;
-                List<String> commands = this.locateCommand(nvv, null);
+                List<String> commands = buildIt.locateCommand(nvv, null);
 
                 if (matcher.groupCount() == 3 && !matcher.group(3).isBlank()) {
 
                     String cmd = null;
 
                     if ("`".equals(matcher.group(3))) {
-                        cmd = this.previousCmdIdx.get(index);
+                        cmd = previousCmdIdx.get(index);
                     } else {
                         cmd = matcher.group(3);
-                        this.previousCmdIdx.put(index, cmd);
+                        previousCmdIdx.put(index, cmd);
                     }
 
                     List<Integer> rangeIdx = rangeToIndex(cmd);
@@ -451,9 +475,9 @@ public class Commands {
                         cmd = commands.get(cmdIdx);
                         log.info(cmd);
                         if ("!".equals(matcher.group(2))) {
-                            this.toggleCommand(nvv, cmd);
+                            configFactory.toggleCommand(nvv, cmd);
                         } else {
-                            this.buildACommand(nvv, cmd);
+                            buildIt.buildACommand(nvv, cmd);
                         }
                     }
                 } else {
@@ -487,7 +511,7 @@ public class Commands {
 
                 if (o instanceof Integer) {
                     if (i != null && cmd.length() == 0) {
-                        this.buildAllCommands(i);
+                        buildIt.buildAllCommands(i);
                     }
                     i = (Integer) o;
                     o = null;
@@ -509,7 +533,7 @@ public class Commands {
 
                     if (i != null && cmd.length() > 0) {
 
-                        this.buildACommand(i, cmd.toString());
+                        buildIt.buildACommand(i, cmd.toString());
                         cmd = new StringBuilder();
                         i = null;
                     }
@@ -518,7 +542,7 @@ public class Commands {
             }
 
             if (i != null && cmd.length() == 0) {
-                this.buildAllCommands(i);
+                buildIt.buildAllCommands(i);
             }
 
             log.fine("swallowing command");

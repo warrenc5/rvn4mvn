@@ -22,9 +22,10 @@ import static rvn.Ansi.ANSI_PURPLE;
 import static rvn.Ansi.ANSI_RED;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_YELLOW;
-import static rvn.Config.hashConfig;
-import static rvn.Config.lockFileName;
 import static rvn.Globals.buildArtifact;
+import static rvn.Globals.config;
+import static rvn.Globals.hashConfig;
+import static rvn.Rvn.lockFileName;
 
 /**
  *
@@ -42,6 +43,13 @@ public class EventWatcher extends Thread {
 
     public static EventWatcher getInstance() {
         return instance;
+    }
+    private final BuildIt buildIt;
+    private final Project project;
+
+    public EventWatcher() {
+        this.buildIt = BuildIt.getInstance();
+        this.project = Project.getInstance();
     }
 
     @Override
@@ -111,7 +119,7 @@ public class EventWatcher extends Thread {
             Hasher.getInstance().update(path);
         }
 
-        this.scheduleFuture(nvv, immediate);
+        buildIt.scheduleFuture(nvv, immediate);
     }
 
     private Path resolve(WatchEvent<?> event, WatchKey key) {
@@ -149,7 +157,7 @@ public class EventWatcher extends Thread {
                 return;
             }
 
-            if (child.equals(config) || this.isConfigFile(child)) {
+            if (child.equals(config) || ConfigFactory.getInstance().isConfigFile(child)) {
                 try {
                     log.info(ANSI_RED + "config changed " + ANSI_GREEN + child + ANSI_RESET);
                     ConfigFactory.getInstance().reloadConfiguration();
@@ -160,18 +168,18 @@ public class EventWatcher extends Thread {
             }
 
             if (kind == ENTRY_DELETE) {
-                Optional<WatchKey> cancelKey = keyPath.entrySet().stream()
+                Optional<WatchKey> cancelKey = PathWatcher.getInstance().keyPath.entrySet().stream()
                         .filter(e -> child.equals(e.getValue())).map(e -> e.getKey()).findFirst();
                 if (cancelKey.isPresent()) {
                     cancelKey.get().cancel();
                 }
                 // TODO remove from buildArtifacts
-                updateIndex();
+                project.updateIndex();
             } else if (kind == ENTRY_CREATE) {
-                this.registerPath(child);
-                updateIndex();
+                PathWatcher.getInstance().registerPath(child);
+                project.updateIndex();
             } else if (kind == ENTRY_MODIFY) {
-                processPath(child);
+                project.processPath(child);
             }
 
         } catch (AccessDeniedException ex) {

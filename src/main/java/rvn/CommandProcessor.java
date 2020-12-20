@@ -40,7 +40,7 @@ public class CommandProcessor {
 
     public CommandProcessor(final Rvn rvn) {
         commandHandlers = new ArrayList<>();
-        commandHandlers.addAll(Commands.createCommandHandlers(rvn, this));
+        commandHandlers.addAll(new Commands().createCommandHandlers(rvn, this));
         thenFinished = Instant.now();
         thenStarted = Instant.now();
     }
