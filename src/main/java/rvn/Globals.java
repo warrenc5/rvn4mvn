@@ -56,7 +56,6 @@ public class Globals {
     public static Path lastFile;
     public static Path lastChangeFile;
 
-    public static Path configPath;
     public static Config config;
 
     public static final String userHome = System.getProperty("user.home");
@@ -67,6 +66,7 @@ public class Globals {
     public static Instant thenStarted = null;
 
     static Map<NVV, String> lastCommand;
+    static List<Path> configs;
 
     static {
         init();
@@ -79,6 +79,7 @@ public class Globals {
     }
 
     public static void init() {
+        configs = new ArrayList<>();
         baseConfig = new HashMap<>();
         agProjects = new HashSet<>();
         properties = new HashMap<>();

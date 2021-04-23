@@ -37,6 +37,7 @@ import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.thenFinished;
 import static rvn.Globals.thenStarted;
 import static rvn.Util.log;
+import static rvn.Util.logX;
 
 /**
  *
@@ -81,10 +82,12 @@ public class Rvn extends Thread {
     public static void main(String[] args) throws Exception {
         Logger.getAnonymousLogger().warning(ANSI_BOLD + ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
         Rvn rvn = new Rvn();
-        Globals.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
+        //Globals.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
+        Globals.configs.addAll(Arrays.asList(args).stream().map(arg -> Path.of(arg)).collect(toList()));
         rvn.start();
         rvn.join();
-        System.out.println(String.format("************** Exited ************************"));
+        //Thread.sleep(5000);
+        System.err.println(String.format("************** Exited ************************"));
     }
 
     private Duration timeout = Duration.ofSeconds(60);
@@ -122,17 +125,20 @@ public class Rvn extends Thread {
 
     @Override
     public void run() {
-        buildIt.start();
         try {
             init();
             new CommandProcessor(this).processStdInOld();
         } catch (IOException ex) {
-            log(log,ex);
+            log(log, ex);
         } catch (Exception ex) {
-            log(log,ex);
+            logX(log, ex);
         }
-        while(this.isAlive()){
-            Thread.yield();
+        buildIt.start();
+        while (this.isAlive()) {
+            try {
+                Thread.currentThread().sleep(500l);
+            } catch (InterruptedException ex) {
+            }
         }
     }
 

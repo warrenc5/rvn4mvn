@@ -1,8 +1,11 @@
 package rvn;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.Reader;
+import java.io.Writer;
 import static java.lang.String.join;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -10,31 +13,28 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
 import java.util.stream.Stream;
+import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonReader;
+import javax.script.Bindings;
 import javax.script.ScriptException;
-import jdk.nashorn.api.scripting.ScriptObjectMirror;
-import java.io.FileWriter;
-import java.io.InputStreamReader;
-import java.io.Writer;
-import java.nio.file.FileSystems;
-import java.util.logging.Level;
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.baseConfig;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.configFileNames;
 import static rvn.Globals.locations;
-import static rvn.Globals.userHome;
 import static rvn.PathWatcher.keys;
+import rvn.graalson.JsonObjectBindings;
 
 /**
  *
@@ -69,26 +69,17 @@ public class ConfigFactory {
     private Logger log = Logger.getLogger(this.getClass().getName());
 
     public List<String> optionalArray(Object v) {
-        if (v instanceof ScriptObjectMirror) {
-            ScriptObjectMirror s = (ScriptObjectMirror) v;
-            if (s.isArray()) {
-                return asArray(s);
-            }
+        if (v instanceof List) {
+            return (List<String>) v;
         }
         return Arrays.asList(new String[]{v.toString()});
-
     }
 
-    public List<String> asArray(ScriptObjectMirror v) {
-        List<String> result = new ArrayList<>();
-        if (v.isArray() && !v.isEmpty()) {
-            for (int i = 0; i < v.size(); i++) {
-                result.add((String) v.getSlot(i));
-            }
-        }
-        return result;
-    }
-
+    /*
+     * public List<String> asArray(Map v) { List<String> result = new
+     * ArrayList<>(); if (v.isArray() && !v.isEmpty()) { for (int i = 0; i <
+     * v.size(); i++) { result.add((String) v.getSlot(i)); } } return result; }
+     */
     Path loadConfiguration(Path path) {
         try {
             NVV nvv = null;
@@ -99,8 +90,7 @@ public class ConfigFactory {
                     log.fine("module configuration found for " + nvv);
                 }
             }
-            URL configURL = path.toUri().toURL();
-            this.loadConfiguration(configURL, nvv);
+            this.loadConfiguration(path, nvv);
             log.info(String.format("watching %1$s for config changes", path.getParent()));
             pathWatcher.watch(path.getParent());
             return path;
@@ -111,56 +101,52 @@ public class ConfigFactory {
     }
 
     Config loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
-        String base = System.getProperty("rvn.config");
-        String name = base + File.separatorChar + "rvn.json";
-        //System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
+        String base = System.getProperty("rvn.config", Globals.userHome + File.separatorChar + ".m2");
+        String name = base + File.separatorChar + ".rvn.json";
+        ////System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
         if (base == null || base.trim().length() == 0) {
             log.info("system property ${rvn.config} not set defaulting to " + name);
         } else {
             log.info("system property ${rvn.config} set " + base + ", resolving " + name);
         }
-        URL configURL = null;
-        if (Files.exists(FileSystems.getDefault().getPath(name))) {
-            configURL = FileSystems.getDefault().getPath(name).toUri().toURL();
-        } else {
-            log.info("loading from classpath " + name);
-            configURL = Rvn.class.getResource(name);
-        }
-        Path configPath = this.loadConfiguration(Path.of(configURL.toURI()));
-        return this.getConfig(configPath);
-    }
 
-    private Path loadConfiguration(URL configURL) throws IOException, ScriptException, URISyntaxException {
-        return this.loadConfiguration(configURL, null);
-    }
+        Globals.configs.add(0, Paths.get(name));
 
-    private Path loadConfiguration(URL configURL, NVV nvv) throws IOException, ScriptException, URISyntaxException {
-        Path config = null;
-
-        log.fine(String.format("trying configuration %1$s", configURL));
-
-        if (configURL == null || configURL.toExternalForm().startsWith("jar:")) {
-            config = Paths.get(userHome + File.separator + ".m2" + File.separator + "rvn.json");
-            if (!Files.exists(config)) {
-                log.info(String.format("%1$s doesn't exist, creating it from " + ANSI_WHITE + "%2$s" + ANSI_RESET,
-                        config, configURL));
-                createConfiguration(config);
-
+        Globals.configs.forEach(path -> {
+            if (path.toFile().isDirectory()) {
+                Globals.configFileNames.forEach(config -> {
+                    try {
+                        this.loadConfiguration(path.resolve(config), null);
+                    } catch (Exception ex) {
+                        Logger.getLogger(ConfigFactory.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                });
             } else {
-                log.info(String.format("%1$s exists", config));
+                try {
+                    this.loadConfiguration(path, null);
+                } catch (Exception ex) {
+                    Logger.getLogger(ConfigFactory.class.getName()).log(Level.SEVERE, null, ex);
+                }
             }
+        });
 
+        return Globals.config;
+    }
+
+    private Path loadConfiguration(Path config, NVV nvv) throws IOException, ScriptException, URISyntaxException {
+        if (!config.startsWith("jar:") && !Files.exists(config)) {
+            log.info(String.format(ANSI_WHITE + "%1$s" + ANSI_RESET + " doesn't exist, creating it", config));
         } else {
-            config = Paths.get(configURL.toURI());
-            log.fine(String.format("trying configuration %1$s", configURL));
+            log.info(String.format("%1$s exists", config));
         }
-
         pathWatcher.watch(config.getParent());
         log.info(String.format("loading configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
 
         Reader scriptReader = Files.newBufferedReader(config);
-        jdk.nashorn.api.scripting.ScriptObjectMirror result = (jdk.nashorn.api.scripting.ScriptObjectMirror) getEngine()
-                .eval(scriptReader);
+        JsonReader reader = Json.createReader(scriptReader);
+        JsonObject jsonObject = reader.readObject();
+        javax.script.Bindings result = (Bindings) new JsonObjectBindings(jsonObject);
+
         if (nvv != null) {
             result.put("projectCoordinates", nvv);
         }
@@ -168,7 +154,7 @@ public class ConfigFactory {
         return config;
     }
 
-    private Config buildConfiguration(ScriptObjectMirror result) {
+    private Config buildConfiguration(Map result) {
         Optional<NVV> oNvv = Optional.ofNullable((NVV) result.get("projectCoordinates"));
 
         Config config = new Config();
@@ -188,7 +174,7 @@ public class ConfigFactory {
         }
 
         String key = null;
-        if (result.hasMember(key = "mvnCmd")) {
+        if (result.containsKey(key = "mvnCmd")) {
 
             if (oNvv.isPresent()) {
                 config.mvnCmdMap.put(oNvv.get(), (String) result.get(key));
@@ -206,73 +192,79 @@ public class ConfigFactory {
         log.fine(key + " " + config.mvnCmd + " because os.name=" + System.getProperty("os.name")
                 + " override with mvnCmd: 'mvn' in config file");
 
-        if (result.hasMember(key = "showOutput")) {
+        if (result.containsKey(key = "showOutput")) {
             config.showOutput = (Boolean) result.get(key);
             log.fine(key + " " + config.showOutput);
         }
-        if (result.hasMember(key = "locations")) {
-            ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            locations.addAll(asArray(v).stream().filter(s -> !s.startsWith("!")).collect(toList()));
+        if (result.containsKey(key = "locations")) {
+            List<String> v = (List) result.get(key);
+            locations.addAll(v.stream().filter(s -> !s.startsWith("!")).collect(toList()));
             log.fine(key + " " + locations.toString());
-
         }
-        if (result.hasMember(key = "watchDirectories")) {
-            ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            if (v.hasMember("includes")) {
-                config.matchDirIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
-                log.fine(key + " includes " + config.matchDirIncludes.toString());
+        if (result.containsKey(key = "watchDirectories")) {
+            Map v = (Map) result.get(key);
+            if (v.containsKey("includes")) {
+                config.matchDirIncludes.addAll((List) v.get("includes"));
+                log.fine(key + " includes "
+                        + config.matchDirIncludes.toString());
             }
-            if (v.hasMember("excludes")) {
-                config.matchDirExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
-                log.fine(key + " excludes " + config.matchDirExcludes.toString());
+            if (v.containsKey("excludes")) {
+                config.matchDirExcludes.addAll((List) v.get("excludes"));
+                log.fine(key + " excludes "
+                        + config.matchDirExcludes.toString());
             }
         }
 
-        if (result.hasMember(key = "activeFiles")) {
-            ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            if (v.hasMember("includes")) {
-                config.matchFileIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
+        if (result.containsKey(key = "activeFiles")) {
+            Map v = (Map) result.get(key);
+            if (v.containsKey("includes")) {
+                config.matchFileIncludes.addAll((List) v.get("includes"));
                 log.fine(key + " includes " + config.matchFileIncludes.toString());
             }
-            if (v.hasMember("excludes")) {
-                config.matchFileExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
+            if (v.containsKey("excludes")) {
+                config.matchFileExcludes.addAll((List) v.get("excludes"));
                 log.fine(key + " excludes " + config.matchFileExcludes.toString());
             }
 
         }
 
-        if (result.hasMember(key = "activeArtifacts")) {
-            ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            if (v.hasMember("includes")) {
-                config.matchArtifactIncludes.addAll(asArray((ScriptObjectMirror) v.getMember("includes")));
-                log.fine(key + " includes " + config.matchArtifactIncludes.toString());
+        if (result.containsKey(key = "activeArtifacts")) {
+            Map v = (Map) result.get(key);
+            if (v.containsKey("includes")) {
+                config.matchArtifactIncludes.addAll((List) v.get("includes"));
+                log.fine(key + " includes "
+                        + config.matchArtifactIncludes.toString());
             }
-            if (v.hasMember("excludes")) {
-                config.matchArtifactExcludes.addAll(asArray((ScriptObjectMirror) v.getMember("excludes")));
-                log.fine(key + " excludes " + config.matchArtifactExcludes.toString());
+            if (v.containsKey("excludes")) {
+                config.matchArtifactExcludes.addAll((List) v.get("excludes"));
+                log.fine(key + " excludes "
+                        + config.matchArtifactExcludes.toString());
             }
 
         }
 
-        if (result.hasMember(key = "buildCommands")) {
-            ScriptObjectMirror v = (ScriptObjectMirror) result.get(key);
-            if (v.isArray()) {
-                List<String> commands = v.values().stream().map(e -> e.toString()).collect(Collectors.toList());
+        if (result.containsKey(key = "buildCommands")) {
+            Object v = result.get(key);
+            if (v instanceof List) {
+                List<String> commands = ((List<String>) v).stream().map(e
+                        -> e.toString()).collect(Collectors.toList());
                 if (oNvv.isPresent()) {
-                    config.addCommand(oNvv.get().toString(), commands);
+                    config.addCommand(oNvv.get().toString(),
+                            commands);
                 }
-            } else {
-                v.entrySet().forEach(e -> config.addCommand(e.getKey(), optionalArray(e.getValue())));
+            } else if (v instanceof Map) {
+                ((Map<String, Object>) v).entrySet().forEach(e
+                        -> config.addCommand(e.getKey(), optionalArray(e.getValue())));
             }
+            log.fine(v.toString());
 
             if (oNvv.isPresent()) {
                 log.fine("commands " + oNvv.toString() + " " + config.commands.get(oNvv.get().toString()));
             }
 
-            log.fine(v.toString());
         }
 
-        if (result.hasMember(key = "timeout")) {
+        if (result.containsKey(key = "timeout")) {
             Integer v = (Integer) result.get(key);
 
             if (oNvv.isPresent()) {
@@ -283,7 +275,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "mvnOpts")) {
+        if (result.containsKey(key = "mvnOpts")) {
             String v = (String) result.get(key);
             if (oNvv.isPresent()) {
                 config.mvnOptsMap.compute(oNvv.get(), (k, o) -> join(o, v));
@@ -293,7 +285,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "javaHome")) {
+        if (result.containsKey(key = "javaHome")) {
             String v = (String) result.get(key);
             if (oNvv.isPresent()) {
                 config.javaHomeMap.put(oNvv.get(), v.toString());
@@ -303,14 +295,14 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "mvnArgs")) {
+        if (result.containsKey(key = "mvnArgs")) {
             Object v = (Object) result.get(key);
             String v2 = "";
 
             if (v instanceof String) {
                 v2 = (String) v;
-            } else if (v instanceof ScriptObjectMirror && ((ScriptObjectMirror) v).isArray()) {
-                v2 = ((ScriptObjectMirror) v).values().stream().map(s -> s.toString()).filter(s -> !s.startsWith("!")).collect(Collectors.joining(" "));
+            } else if (v instanceof List) {
+                v2 = ((List<String>) v).stream().map(s -> s.toString()).filter(s -> !s.startsWith("!")).collect(Collectors.joining(" "));
             }
 
             String v3 = v2;
@@ -322,7 +314,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "plugins")) {
+        if (result.containsKey(key = "plugins")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
                 config.processPluginMap.put(oNvv.get(), v);
@@ -332,7 +324,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "daemon")) {
+        if (result.containsKey(key = "daemon")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
                 config.daemonMap.put(oNvv.get(), v);
@@ -342,7 +334,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "showOutput")) {
+        if (result.containsKey(key = "showOutput")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
                 config.showOutputMap.put(oNvv.get(), v);
@@ -352,7 +344,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "reuseOutput")) {
+        if (result.containsKey(key = "reuseOutput")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
                 config.reuseOutputMap.put(oNvv.get(), v);
@@ -362,7 +354,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "batchWait")) {
+        if (result.containsKey(key = "batchWait")) {
             Integer v = (Integer) result.get(key);
             if (oNvv.isPresent()) {
                 config.batchWaitMap.put(oNvv.get(), Duration.ofSeconds(v));
@@ -372,7 +364,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "interrupt")) {
+        if (result.containsKey(key = "interrupt")) {
             Boolean v = (Boolean) result.get(key);
 
             if (oNvv.isPresent()) {
@@ -383,7 +375,7 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-        if (result.hasMember(key = "settings")) {
+        if (result.containsKey(key = "settings")) {
             String v = (String) result.get(key);
 
             if (oNvv.isPresent()) {
@@ -465,13 +457,6 @@ public class ConfigFactory {
         this.init();
         this.loadDefaultConfiguration();
         this.scan();
-    }
-
-    private ScriptEngine getEngine() {
-        ScriptEngineManager manager = new ScriptEngineManager();
-        ScriptEngine engine = manager.getEngineByName("JavaScript");
-        return engine;
-
     }
 
     private void init() {

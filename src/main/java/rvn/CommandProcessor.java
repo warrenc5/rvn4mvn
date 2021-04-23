@@ -16,10 +16,10 @@ import java.util.Spliterators;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.StreamSupport;
-import jdk.internal.org.jline.reader.LineReader;
-import jdk.internal.org.jline.reader.LineReaderBuilder;
-import jdk.internal.org.jline.terminal.Terminal;
-import jdk.internal.org.jline.terminal.TerminalBuilder;
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.TerminalBuilder;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_YELLOW;
 import static rvn.Globals.thenFinished;
@@ -112,7 +112,7 @@ public class CommandProcessor {
         }
 
         public void run() {
-            log.info(String.format("commanded"));
+            log.info(String.format("commanded ? for help"));
 
             while (this.isAlive()) {
                 Thread.yield();
