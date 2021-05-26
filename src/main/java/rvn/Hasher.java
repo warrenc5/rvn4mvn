@@ -79,7 +79,7 @@ public class Hasher {
         if (path != null) {
             try {
                 String oldHash = hashes.put(path.toString(), newHash = this.toSHA1(path));
-                updated = oldHash != null && oldHash != newHash;
+                updated = oldHash != null && !oldHash.equals(newHash);
 
                 writeHashes();
             } catch (java.nio.charset.MalformedInputException ex) {
@@ -89,6 +89,7 @@ public class Hasher {
             }
         }
         return updated;
+        
     }
 
     public void writeHashes() throws IOException {

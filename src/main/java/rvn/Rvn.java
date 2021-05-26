@@ -5,21 +5,15 @@ package rvn;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.PrintStream;
-import java.io.Reader;
-import java.io.Writer;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -156,31 +150,15 @@ public class Rvn extends Thread {
         Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
         ConfigFactory.getInstance().loadDefaultConfiguration();
 
-        commandHandlers = new ArrayList<>();
-        //commandHandlers.addAll(new Commands().createCommandHandlers(this));
         project.updateIndex();
+
+        getPathWatcher().run();
 
     }
 
     public Optional<String> getExtensionByStringHandling(String filename) {
         return Optional.ofNullable(filename).filter(f -> f.contains("."))
                 .map(f -> f.substring(filename.lastIndexOf(".") + 1));
-    }
-
-    private boolean isConfigFile(Path path) throws IOException {
-        return (Files.exists(path) && Files.isSameFile(path, this.config))
-                || Globals.configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
-    }
-
-    private void createConfiguration(Path config) throws IOException {
-        URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
-        try (Reader reader = new InputStreamReader(configURL.openStream()); Writer writer = new FileWriter(config.toFile());) {
-            while (reader.ready()) {
-                writer.write(reader.read());
-            }
-            writer.flush();
-        }
-        log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
     }
 
     static void resetOut() {

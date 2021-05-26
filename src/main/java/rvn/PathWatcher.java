@@ -1,5 +1,6 @@
 package rvn;
 
+
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -77,12 +78,12 @@ public class PathWatcher extends Thread {
     public static PathWatcher getInstance() {
         return instance;
     }
+
     private final ConfigFactory configFactory;
 
     public PathWatcher() throws IOException {
         watcher = FileSystems.getDefault().newWatchService();
         configFactory = ConfigFactory.getInstance();
-
         keyPath = new HashMap<>();
         keys = new HashSet<>(locations.size());
     }
@@ -135,6 +136,7 @@ public class PathWatcher extends Thread {
         }
     }
 
+    @Override
     public void run() {
         try {
             scan(Globals.locations);
@@ -240,7 +242,7 @@ public class PathWatcher extends Thread {
     }
 
     private boolean matchDirectories(Path path) {
-        Config config = this.configFactory.getConfig(path);
+        Config config = ConfigFactory.getInstance().getConfig(path);
         return this.matchDirectories(config, path);
     }
 
@@ -281,11 +283,10 @@ public class PathWatcher extends Thread {
     }
 
     boolean matchFiles(Path path) throws IOException {
-        Config config = configFactory.getConfig(path);
-        return configFactory.isConfigFile(path)
+        Config config = ConfigFactory.getInstance().getConfig(path);
+        return ConfigFactory.getInstance().isConfigFile(path)
                 || config.matchFileIncludes.isEmpty() || (config.matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
                 && !config.matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
     }
-    
 
 }

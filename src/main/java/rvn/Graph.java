@@ -59,7 +59,16 @@ public class Graph<T> extends ConcurrentSkipListMap<T, Set<T>> {
     }
 
     public boolean contains(Edge edge) {
-        return this.containsKey(edge.nvv1) && this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
+        if (!this.containsKey(edge.nvv1)) {
+            return false;
+        }
+        if (edge.nvv2 == null) {
+            return true;
+        }
+        if (edge.nvv2.equals(edge.nvv1)) {
+            return true;
+        }
+        return this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
     }
 
     public List<T> roots() {

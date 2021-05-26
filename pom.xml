@@ -287,6 +287,11 @@
     </profiles>
     <dependencies>
         <dependency>
+            <groupId>biz.mofokom</groupId>
+            <artifactId>graalson</artifactId>
+            <version>1.0.1</version>
+        </dependency>
+         <dependency>
             <groupId>org.jline</groupId>
             <artifactId>jline</artifactId>
             <version>3.14.1</version>

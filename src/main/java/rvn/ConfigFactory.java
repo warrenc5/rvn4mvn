@@ -1,5 +1,6 @@
 package rvn;
 
+import au.com.devnull.graalson.JsonObjectBindings;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -34,7 +35,6 @@ import static rvn.Globals.buildArtifact;
 import static rvn.Globals.configFileNames;
 import static rvn.Globals.locations;
 import static rvn.PathWatcher.keys;
-import rvn.graalson.JsonObjectBindings;
 
 /**
  *
@@ -55,7 +55,7 @@ public class ConfigFactory {
         }
     }
 
-    public static ConfigFactory getInstance() {
+    public static synchronized ConfigFactory getInstance() {
         return instance;
     }
 
@@ -76,9 +76,10 @@ public class ConfigFactory {
     }
 
     /*
-     * public List<String> asArray(Map v) { List<String> result = new
+     * public List<String> asArray(Map v) { List<String> result = new.
      * ArrayList<>(); if (v.isArray() && !v.isEmpty()) { for (int i = 0; i <
      * v.size(); i++) { result.add((String) v.getSlot(i)); } } return result; }
+    
      */
     Path loadConfiguration(Path path) {
         try {
@@ -86,7 +87,7 @@ public class ConfigFactory {
             if (configFileNames.contains(path.getFileName().toString())) {
                 Path pomPath = path.getParent().resolve("pom.xml");
                 if (pomPath.toFile().exists()) {
-                    nvv = project.nvvFrom(pomPath);
+                    nvv = Project.getInstance().nvvFrom(pomPath);
                     log.fine("module configuration found for " + nvv);
                 }
             }
@@ -133,16 +134,17 @@ public class ConfigFactory {
         return Globals.config;
     }
 
-    private Path loadConfiguration(Path config, NVV nvv) throws IOException, ScriptException, URISyntaxException {
-        if (!config.startsWith("jar:") && !Files.exists(config)) {
-            log.info(String.format(ANSI_WHITE + "%1$s" + ANSI_RESET + " doesn't exist, creating it", config));
+    private Path loadConfiguration(Path configPath, NVV nvv) throws IOException, ScriptException, URISyntaxException {
+        if (!configPath.startsWith("jar:") && !Files.exists(configPath)) {
+            log.info(String.format("configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET + " doesn't exist, creating it", configPath));
+            this.createConfiguration(configPath);
         } else {
-            log.info(String.format("%1$s exists", config));
+            log.info(String.format("%1$s exists", configPath));
         }
-        pathWatcher.watch(config.getParent());
-        log.info(String.format("loading configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
+        pathWatcher.watch(configPath.getParent());
+        log.info(String.format("loading configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, configPath));
 
-        Reader scriptReader = Files.newBufferedReader(config);
+        Reader scriptReader = Files.newBufferedReader(configPath);
         JsonReader reader = Json.createReader(scriptReader);
         JsonObject jsonObject = reader.readObject();
         javax.script.Bindings result = (Bindings) new JsonObjectBindings(jsonObject);
@@ -150,14 +152,21 @@ public class ConfigFactory {
         if (nvv != null) {
             result.put("projectCoordinates", nvv);
         }
-        buildConfiguration(result);
-        return config;
+        Config newConfig = buildConfiguration(configPath, result);
+
+        if (nvv == null) {
+            Globals.config = newConfig;
+        } else {
+            Globals.baseConfig.put(configPath, newConfig);
+
+        }
+        return configPath;
     }
 
-    private Config buildConfiguration(Map result) {
+    private Config buildConfiguration(Path configPath, Map result) {
         Optional<NVV> oNvv = Optional.ofNullable((NVV) result.get("projectCoordinates"));
 
-        Config config = new Config();
+        Config config = new Config(configPath);
 
         //TODO merge
         if (oNvv.isPresent()) {
@@ -307,7 +316,7 @@ public class ConfigFactory {
 
             String v3 = v2;
             if (oNvv.isPresent()) {
-                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(o, v3));
+                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(" ", o, v3));
             } else {
                 config.mvnArgs = v2.toString();
             }
@@ -432,12 +441,20 @@ public class ConfigFactory {
 
     public Config getConfig(NVV nvv) {
         Path path = buildArtifact.get(nvv);
+        if (path == null) {
+            return Globals.config;
+        }
         return getConfig(path);
     }
 
     public Config getConfig(Path path) {
         Path configPath = findMaximumPathMatch(path);
-        return baseConfig.get(configPath);
+        Config config = baseConfig.get(configPath);
+        if (config == null) {
+            return Globals.config;
+        } else {
+            return config;
+        }
     }
 
     private Path findMaximumPathMatch(Path path) {

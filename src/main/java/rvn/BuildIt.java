@@ -82,9 +82,12 @@ public class BuildIt extends Thread {
     public static BuildIt getInstance() {
         return instance;
     }
+
     private final Hasher hasher;
     private final Project project;
     private final ImportFinder iFinder;
+
+    private Graph<NVV> q = new Graph<>();
 
     public BuildIt() {
         this.setName("BuildIt");
@@ -102,7 +105,7 @@ public class BuildIt extends Thread {
 
         buildPaths.entrySet().stream().forEach(e -> {
             NVV nvv = e.getValue();
-            if (project.needsBuild(nvv)) {
+            if (Project.getInstance().needsBuild(nvv)) {
                 if (!toBuild.contains(nvv)) {
                     toBuild.add(nvv);
                 }
@@ -238,11 +241,11 @@ public class BuildIt extends Thread {
         if (dir == null) {
             log.warning("no build path " + nvv);
             return;
-        } else if (!project.isPom(dir)) {
+        } else if (!Project.getInstance().isPom(dir)) {
             return;
         } else {
             try {
-                project.processPom(dir);
+                Project.getInstance().processPom(dir);
             } catch (SAXException | XPathExpressionException | IOException | ParserConfigurationException ex) {
                 log.warning("process " + ex.getMessage());
             }
@@ -253,11 +256,12 @@ public class BuildIt extends Thread {
         if (!q.contains(edge)) {
             log.info("build " + edge.toString());
             q.insert(edge);
+            log.info(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
+        } else {
+            log.info("already building " + edge.toString());
         }
-        log.finest(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
     }
 
-    Graph<NVV> q = new Graph<>();
 
     public synchronized void scheduleFuture(NVV nvv, boolean immediate) {
         Duration batchWait = immediate ? Duration.ZERO : ConfigFactory.getInstance().getConfig(nvv).batchWaitMap.getOrDefault(nvv, config.batchWait);
@@ -322,7 +326,7 @@ public class BuildIt extends Thread {
                     //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
                     .flatMap(e -> Project.getInstance().projectDepends(nvv))
                     .filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
-                    .filter(nvv4 -> project.needsBuild(nvv4))
+                    .filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
                     .distinct().collect(toList());
 
             if (deps.isEmpty()) {
@@ -349,6 +353,7 @@ public class BuildIt extends Thread {
     }
 
     public void run() {
+        log.info("waiting for builds");
         while (this.isAlive()) {
             try {
                 Thread.currentThread().sleep(500l);
@@ -361,7 +366,10 @@ public class BuildIt extends Thread {
                     Rvn.ee = !Rvn.ee;
                     Rvn.easterEgg();
                 }
+            } else {
+                log.info("have some builds");
             }
+
             try (final Stream<NVV> path = q.paths2()) {
                 path.forEach((nvv) -> {
                     doBuildTimeout(nvv);
