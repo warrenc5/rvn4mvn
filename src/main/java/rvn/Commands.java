@@ -75,9 +75,9 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("?", "?", "Prints the help.", (command) -> {
             if (command.equals("?")) {
-                log.info(String.format("%1$s\t\t %2$s \t\t\t %3$s\n", "Command", "Example", "Description"));
+                log.info(String.format("%1$s\t\t\t\t %2$s \t\t\t\t %3$s\n", "Command", "Example", "Description"));
                 processor.commandHandlers.stream().forEach(c -> {
-                    log.info(String.format("%1$s\t\t %2$s \t\t\t - %3$s\n", c.verb, c.format, c.description));
+                    log.info(String.format("%1$s\t\t\t\t %2$s \t\t\t\t - %3$s\n", c.verb, c.format, c.description));
 
                 });
                 return TRUE;
@@ -116,7 +116,7 @@ public class Commands {
                     }
                 }.apply(command)));
 
-        commandHandlers.add(new CommandHandler("+ {buildIndex}", "+ 1", "Show the output.", (command) -> new SimpleCommand("^+\\s([0-9]?)$") {
+        commandHandlers.add(new CommandHandler("+ {buildIndex}", "+ 1", "Show the output.", (command) -> new SimpleCommand("^\\+\\s?([0-9]?)$") {
 
             public Boolean configure(Iterator<String> i) throws Exception {
                 if (!i.hasNext()) {

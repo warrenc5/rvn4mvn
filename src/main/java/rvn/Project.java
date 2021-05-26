@@ -128,10 +128,10 @@ public class Project {
             return;
         }
 
-        boolean skipHash = !path.endsWith("pom.xml") || configFactory.isConfigFile(path);
+        boolean checkHash = path.endsWith("pom.xml") || !configFactory.isConfigFile(path);
 
-        if (!skipHash
-                && Hasher.getInstance().update(path)) {
+        if (checkHash
+                && !Hasher.getInstance().hashChange(path)) {
             log.info("no hash change detected " + path);
             return;
         }

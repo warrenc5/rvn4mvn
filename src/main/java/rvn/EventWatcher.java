@@ -58,6 +58,7 @@ public class EventWatcher extends Thread {
         Map<Path, WatchEvent.Kind> events = new HashMap<>();
         long lastEvent = System.currentTimeMillis();
 
+        log.info("watching for changes");
         while (this.isAlive()) {
             Thread.yield();
 
@@ -115,10 +116,12 @@ public class EventWatcher extends Thread {
                 "changed " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_YELLOW + " %3$s" + ANSI_RESET,
                 nvv.toString(), path, LocalTime.now().toString()));
 
+        boolean updated = false;
         if (path != null) {
-            Hasher.getInstance().update(path);
+            updated = Hasher.getInstance().update(path);
         }
 
+        if(updated || immediate)
         buildIt.scheduleFuture(nvv, immediate);
     }
 
@@ -174,12 +177,12 @@ public class EventWatcher extends Thread {
                     cancelKey.get().cancel();
                 }
                 // TODO remove from buildArtifacts
-                project.updateIndex();
+                Project.getInstance().updateIndex();
             } else if (kind == ENTRY_CREATE) {
                 PathWatcher.getInstance().registerPath(child);
-                project.updateIndex();
+                Project.getInstance().updateIndex();
             } else if (kind == ENTRY_MODIFY) {
-                project.processPath(child);
+                Project.getInstance().processPath(child);
             }
 
         } catch (AccessDeniedException ex) {

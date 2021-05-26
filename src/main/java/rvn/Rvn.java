@@ -128,6 +128,8 @@ public class Rvn extends Thread {
             logX(log, ex);
         }
         buildIt.start();
+        getPathWatcher().start();
+        EventWatcher.getInstance().start();
 
         while (this.isAlive()) {
             try {
@@ -154,7 +156,6 @@ public class Rvn extends Thread {
 
         project.updateIndex();
 
-        getPathWatcher().run();
 
     }
 
