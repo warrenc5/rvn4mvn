@@ -87,7 +87,7 @@ public class BuildIt extends Thread {
     private final Project project;
     private final ImportFinder iFinder;
 
-    private Graph<NVV> q = new Graph<>();
+    private Graph<NVV> q ;
 
     public BuildIt() {
         this.setName("BuildIt");
@@ -99,6 +99,7 @@ public class BuildIt extends Thread {
         this.setDefaultUncaughtExceptionHandler((e, t) -> {
             log.log(Level.WARNING, e.getName() + " " + t.getMessage(), t);
         });
+        q = new Graph<>();
     }
 
     void calculateToBuild() {
@@ -214,7 +215,7 @@ public class BuildIt extends Thread {
     }
 
     private boolean commandMatch(String key, NVV nvv, Path path) {
-        return project.matchNVV(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
+        return Project.getInstance().matchNVV(nvv, key) || (path != null && path.toString().matches(key)) || nvv.toString().matches(key);
     }
 
     void stopAllBuilds() {
@@ -359,7 +360,7 @@ public class BuildIt extends Thread {
                 Thread.currentThread().sleep(500l);
             } catch (InterruptedException ex) {
             }
-            if (q.isEmpty()) {
+            if (this.q.isEmpty()) {
                 continue;
             } else if (q.size() >= 5) {
                 if (!Rvn.ee) {
@@ -367,9 +368,9 @@ public class BuildIt extends Thread {
                     Rvn.easterEgg();
                 }
             } else {
-                log.info("have some builds");
             }
 
+            log.info("have some builds");
             try (final Stream<NVV> path = q.paths2()) {
                 path.forEach((nvv) -> {
                     doBuildTimeout(nvv);

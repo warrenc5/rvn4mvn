@@ -101,6 +101,7 @@ public class Globals {
 
         lastCommand = new HashMap<>();
         paths = new ArrayList<>();
+        logs = new ArrayList<>();
         thenFinished = Instant.now();
         thenStarted = Instant.now();
     }

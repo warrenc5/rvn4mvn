@@ -243,6 +243,9 @@ public class Commands {
                                 lastBuild.getOrDefault(i, FileTime.from(Instant.now())).toInstant(),
                                 Instant.now()))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
+                if(toBuild.isEmpty()){
+                    log.info("all builds good");
+                }
                 return TRUE;
             }
             return FALSE;

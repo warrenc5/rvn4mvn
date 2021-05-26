@@ -9,14 +9,18 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.json.Json;
 import javax.json.JsonObject;
 import javax.json.JsonReader;
 import javax.json.JsonWriter;
 import javax.script.Bindings;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.fail;
 import org.junit.Ignore;
 import org.junit.Test;
+import rvn.BuildIt;
 import rvn.Rvn;
 
 /**
@@ -26,11 +30,26 @@ import rvn.Rvn;
 public class RvnTest {
 
     @Test
+    public void commandTest() {
+        String command = "0,1";
+        Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
+
+        Matcher matcher = re.matcher(command);
+        if (!matcher.matches()) {
+            fail();
+        }
+    }
+
+    @Test
     public void test() throws URISyntaxException, Exception {
         URL config = RvnTest.class.getResource("/test/rvn.json");
         assertNotNull(config);
         File file = new File(config.toURI());
-        Rvn.main(new String[]{file.getAbsolutePath()});
+        Rvn rvn = new Rvn(new String[]{file.getAbsolutePath()});
+        rvn.init();
+        BuildIt.getInstance().start();
+        rvn.getCommandHandler().processCommand("0 ");
+
     }
 
     @Test

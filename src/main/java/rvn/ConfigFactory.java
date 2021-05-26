@@ -316,7 +316,7 @@ public class ConfigFactory {
 
             String v3 = v2;
             if (oNvv.isPresent()) {
-                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(" ", o, v3));
+                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(" ", o==null?"":o, v3));
             } else {
                 config.mvnArgs = v2.toString();
             }

@@ -79,9 +79,7 @@ public class Hasher {
         if (path != null) {
             try {
                 String oldHash = hashes.put(path.toString(), newHash = this.toSHA1(path));
-                updated = oldHash != null && !oldHash.equals(newHash);
-
-                writeHashes();
+                updated = oldHash != null && !oldHash.toString().equals(newHash.toString());
             } catch (java.nio.charset.MalformedInputException ex) {
                 log.warning("hash " + path.toString() + " " + ex.getMessage());
             } catch (IOException ex) {

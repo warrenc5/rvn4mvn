@@ -86,7 +86,7 @@ public class CommandProcessor {
         new StdInProcessor(iterator).start();
     }
 
-    private void processCommand(final String command2) {
+    public void processCommand(final String command2) {
         final String command = command2.trim();
         log.info(String.format(ANSI_YELLOW + "%1$s" + ANSI_RESET + " last build finished " + ANSI_YELLOW + "%2$s" + ANSI_RESET + " ago. last build started " + ANSI_YELLOW + "%3$s" + ANSI_RESET + " ago.",
                 LocalTime.now(), Duration.between(thenFinished, Instant.now()).toString(), Duration.between(thenStarted, Instant.now()).toString()));

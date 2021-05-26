@@ -82,6 +82,7 @@ public class Config {
         lastCommand = new HashMap<>();
         mvnCmdMap = new HashMap<>();
         batchWaitMap = new HashMap<>();
+        timeout = Duration.ofMinutes(2);
         timeoutMap = new HashMap<>();
         interruptMap = new HashMap<>();
         settingsMap = new HashMap<>();

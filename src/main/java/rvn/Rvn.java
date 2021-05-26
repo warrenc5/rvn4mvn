@@ -40,13 +40,8 @@ import static rvn.Util.logX;
 public class Rvn extends Thread {
 
     /**
-     * *
-     * are commands for the project merge ` and `` command handlers. *
-     * autoResume -rf module projects
+     * TODO: autoResume -rf module projects
      */
-    //TODO make these paths
-    List<CommandHandler> commandHandlers;
-
     private ImportFinder iFinder;
     private Logger log = Logger.getLogger(Rvn.class.getName());
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
@@ -75,9 +70,9 @@ public class Rvn extends Thread {
 
     public static void main(String[] args) throws Exception {
         Logger.getAnonymousLogger().warning(ANSI_BOLD + ANSI_GREEN + "Raven 4 Maven" + ANSI_RESET);
-        Rvn rvn = new Rvn();
+        Rvn rvn = new Rvn(args);
+        rvn.init();
         //Globals.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
-        Globals.configs.addAll(Arrays.asList(args).stream().map(arg -> Path.of(arg)).collect(toList()));
         rvn.start();
         rvn.join();
         //Thread.sleep(5000);
@@ -102,6 +97,7 @@ public class Rvn extends Thread {
             return t;
         }
     };
+    private CommandProcessor commandProcessor;
 
     public Rvn() throws Exception {
 
@@ -113,21 +109,26 @@ public class Rvn extends Thread {
 
         System.out.print(ANSI_RESET + ANSI_RESET + ANSI_WHITE);
         project = Project.getInstance();
-        buildIt = new BuildIt();
+        buildIt = BuildIt.getInstance();
         this.setDaemon(true);
+    }
+
+    public Rvn(String[] args) throws Exception {
+        this();
+        Globals.configs.addAll(Arrays.asList(args).stream().map(arg -> Path.of(arg)).collect(toList()));
     }
 
     @Override
     public void run() {
         try {
-            init();
-            new CommandProcessor(this).processStdInOld();
+            commandProcessor.processStdInOld();
         } catch (IOException ex) {
             log(log, ex);
         } catch (Exception ex) {
             logX(log, ex);
         }
         buildIt.start();
+
         while (this.isAlive()) {
             try {
                 Thread.currentThread().sleep(500l);
@@ -137,6 +138,7 @@ public class Rvn extends Thread {
     }
 
     public void init() throws Exception {
+        this.commandProcessor = new CommandProcessor(this);
 
         log.info(System.getProperties().toString());
         thenFinished = Instant.now();
@@ -216,6 +218,10 @@ public class Rvn extends Thread {
 
     public static Config getGlobalConfig() {
         return Globals.config;
+    }
+
+    public CommandProcessor getCommandHandler() {
+        return this.commandProcessor;
     }
 
 }
