@@ -234,7 +234,7 @@ public class Project {
                 }
             }
 
-            log.fine("found build " + nvv.toString() + " " + path.toString());
+            log.info("found build " + nvv.toString() + " " + path.toString());
             buildArtifact.put(nvv, path);
             buildPaths.put(path, nvv);
         } else if (path.toString().endsWith(".pom")) {

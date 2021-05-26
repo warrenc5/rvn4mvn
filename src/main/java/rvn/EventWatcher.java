@@ -68,6 +68,7 @@ public class EventWatcher extends Thread {
                 events.entrySet().forEach(e -> processEvent(e.getKey(), e.getValue()));
                 events.clear();
             }
+            Project.getInstance().updateIndex();
             //log.fine(String.format("waiting.."));
 
             WatchKey key;
@@ -121,8 +122,9 @@ public class EventWatcher extends Thread {
             updated = Hasher.getInstance().update(path);
         }
 
-        if(updated || immediate)
-        buildIt.scheduleFuture(nvv, immediate);
+        if (updated || immediate) {
+            buildIt.scheduleFuture(nvv, immediate);
+        }
     }
 
     private Path resolve(WatchEvent<?> event, WatchKey key) {
@@ -177,7 +179,12 @@ public class EventWatcher extends Thread {
                     cancelKey.get().cancel();
                 }
                 // TODO remove from buildArtifacts
-                Project.getInstance().updateIndex();
+                NVV nvv = Globals.buildPaths.get(child);
+                if (nvv != null) {
+                    Globals.buildArtifact.remove(nvv);
+                    Globals.buildPaths.remove(child);
+                }
+
             } else if (kind == ENTRY_CREATE) {
                 PathWatcher.getInstance().registerPath(child);
                 Project.getInstance().updateIndex();

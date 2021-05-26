@@ -284,9 +284,10 @@ public class PathWatcher extends Thread {
 
     boolean matchFiles(Path path) throws IOException {
         Config config = ConfigFactory.getInstance().getConfig(path);
-        return ConfigFactory.getInstance().isConfigFile(path)
+        boolean match = ConfigFactory.getInstance().isConfigFile(path)
                 || config.matchFileIncludes.isEmpty() || (config.matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
                 && !config.matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
+        return match;
     }
 
 }

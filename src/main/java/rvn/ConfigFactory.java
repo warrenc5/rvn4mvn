@@ -156,7 +156,9 @@ public class ConfigFactory {
 
         if (nvv == null) {
             Globals.config = newConfig;
+            log.info(String.format("global configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, configPath));
         } else {
+            log.info(String.format("project configuration " + ANSI_WHITE + "%1$s %2$s" + ANSI_RESET, configPath, nvv.toString()) );
             Globals.baseConfig.put(configPath, newConfig);
 
         }
@@ -461,7 +463,7 @@ public class ConfigFactory {
         int max = 0;
         Path result = null;
         for (Path key : baseConfig.keySet()) {
-            if (key.getParent().startsWith(path.getParent()) && key.getParent().toString().length() > max) {
+            if (path.startsWith(key.getParent()) && key.getParent().toString().length() > max) {
                 result = key;
                 max = key.getParent().toString().length();
             }
@@ -501,5 +503,6 @@ public class ConfigFactory {
             return "!" + cmd;
         }
     }
+
 
 }

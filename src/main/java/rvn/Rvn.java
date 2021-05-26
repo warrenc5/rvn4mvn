@@ -194,6 +194,7 @@ public class Rvn extends Thread {
                 // System.out.println(String.format("%1$s %2$s", logging,
                 // Files.exists(Paths.get(logging))));
                 LogManager.getLogManager().readConfiguration(logging.toURL().openStream());
+                System.err.println("configured logging " + resource.toExternalForm());
             } else {
                 System.err.println("no /logging.properties found in classpath");
             }

@@ -222,8 +222,9 @@ public class Commands {
                 .add(new CommandHandler("@", "@", "Reload the configuration file and rescan filesystem.", (command) -> {
                     if (command.equals("@")) {
                         try {
-                            Globals.config.commands.clear();
+                            Globals.config.init();
                             ConfigFactory.getInstance().reloadConfiguration();
+                            PathWatcher.getInstance().run();
                         } catch (Exception ex) {
                             log.warning("reload " + ex.getMessage());
                         }
