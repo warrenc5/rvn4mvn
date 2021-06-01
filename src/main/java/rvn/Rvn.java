@@ -28,8 +28,6 @@ import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
-import static rvn.Globals.thenFinished;
-import static rvn.Globals.thenStarted;
 import static rvn.Util.log;
 import static rvn.Util.logX;
 
@@ -128,7 +126,7 @@ public class Rvn extends Thread {
             logX(log, ex);
         }
         buildIt.start();
-        getPathWatcher().start();
+        PathWatcher.getInstance().start();
         EventWatcher.getInstance().start();
 
         while (this.isAlive()) {
@@ -143,8 +141,6 @@ public class Rvn extends Thread {
         this.commandProcessor = new CommandProcessor(this);
 
         log.info(System.getProperties().toString());
-        thenFinished = Instant.now();
-        thenStarted = Instant.now();
 
         Hasher.getInstance().readHashes();
 
@@ -155,7 +151,6 @@ public class Rvn extends Thread {
         ConfigFactory.getInstance().loadDefaultConfiguration();
 
         project.updateIndex();
-
 
     }
 
