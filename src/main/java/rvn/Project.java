@@ -104,11 +104,11 @@ public class Project {
 
     private void processPath(String uri)
             throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
-        this.processPath(uri, false);
+        this.processPath(uri, false);;
     }
 
     void processPath(String uri, boolean immediate) throws XPathExpressionException, SAXException, IOException, ParserConfigurationException, Exception {
-        log.fine("in ->" + uri);
+        log.fine("in ->" + uri);;
         Path path = Paths.get(uri);
         processPath(path, immediate);
     }

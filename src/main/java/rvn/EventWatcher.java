@@ -66,9 +66,11 @@ public class EventWatcher extends Thread {
                 System.err.print('.');
 
                 events.entrySet().forEach(e -> processEvent(e.getKey(), e.getValue()));
+
                 events.clear();
+
+                Project.getInstance().updateIndex();
             }
-            Project.getInstance().updateIndex();
             //log.fine(String.format("waiting.."));
 
             WatchKey key;
@@ -109,6 +111,11 @@ public class EventWatcher extends Thread {
 
     public NVV processChange(NVV nvv) {
         processChange(nvv, buildArtifact.get(nvv), false);
+        return nvv;
+    }
+
+    public NVV processChange(NVV nvv, boolean immediate) {
+        processChange(nvv, buildArtifact.get(nvv), immediate);
         return nvv;
     }
 

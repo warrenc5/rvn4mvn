@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
+
+import static rvn.Globals.thenFinished;
+import static rvn.Globals.thenStarted;
 import java.util.stream.Stream;
 import javax.json.Json;
 import javax.json.JsonObject;
@@ -158,7 +162,7 @@ public class ConfigFactory {
             Globals.config = newConfig;
             log.info(String.format("global configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, configPath));
         } else {
-            log.info(String.format("project configuration " + ANSI_WHITE + "%1$s %2$s" + ANSI_RESET, configPath, nvv.toString()) );
+            log.info(String.format("project configuration " + ANSI_WHITE + "%1$s %2$s" + ANSI_RESET, configPath, nvv.toString()));
             Globals.baseConfig.put(configPath, newConfig);
 
         }
@@ -318,7 +322,7 @@ public class ConfigFactory {
 
             String v3 = v2;
             if (oNvv.isPresent()) {
-                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(" ", o==null?"":o, v3));
+                config.mvnArgsMap.compute(oNvv.get(), (k, o) -> join(" ", o == null ? "" : o, v3));
             } else {
                 config.mvnArgs = v2.toString();
             }
@@ -441,6 +445,10 @@ public class ConfigFactory {
         log.info(String.format("written new configuration to " + ANSI_WHITE + "%1$s" + ANSI_RESET, config));
     }
 
+    public Config getGlobalConfig() {
+        return Globals.config;
+    }
+
     public Config getConfig(NVV nvv) {
         Path path = buildArtifact.get(nvv);
         if (path == null) {
@@ -479,6 +487,8 @@ public class ConfigFactory {
     }
 
     private void init() {
+        thenStarted = Instant.now();
+        thenFinished = Instant.now();
     }
 
     private void scan() {
@@ -503,6 +513,5 @@ public class ConfigFactory {
             return "!" + cmd;
         }
     }
-
 
 }

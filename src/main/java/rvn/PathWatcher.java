@@ -1,6 +1,5 @@
 package rvn;
 
-
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -88,6 +87,8 @@ public class PathWatcher extends Thread {
         keys = new HashSet<>(locations.size());
     }
 
+    FlexiTuple ft = new FlexiTuple();
+
     public Optional<FileTime> watchRecursively(Path dir) {
         try {
             Thread.currentThread().yield();
@@ -99,13 +100,23 @@ public class PathWatcher extends Thread {
             log.warning(dir + " is " + depth + " deep");
         } else {
         }
+        Instant then = null;
         lastDepth = depth;
         watch(dir);
+        if (depth >= 1) {
+            then = Instant.now();
+        }
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).forEach(this::watchRecursively);
         } catch (IOException ex) {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         } finally {
+
+            if (depth > 1) {
+                Duration between = Duration.between(then, Instant.now());
+                ft.put(dir, depth, between);
+            }
+
             depth--;
         }
         try (Stream<Path> stream = Files.list(dir)) {
@@ -242,13 +253,22 @@ public class PathWatcher extends Thread {
     }
 
     private boolean matchDirectories(Path path) {
+        Config global = ConfigFactory.getInstance().getGlobalConfig();
         Config config = ConfigFactory.getInstance().getConfig(path);
-        return this.matchDirectories(config, path);
+
+        Set<String> matchIncludes = new HashSet<>();
+        Set<String> matchExcludes = new HashSet<>();
+        matchIncludes.addAll(global.matchDirIncludes);
+        matchIncludes.addAll(config.matchDirIncludes);
+        matchExcludes.addAll(global.matchDirExcludes);
+        matchExcludes.addAll(config.matchDirExcludes);
+
+        return this.matchDirectories(path, matchIncludes, matchExcludes);
     }
 
-    private boolean matchDirectories(Config config, Path path) {
-        return config.matchDirIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !config.matchDirExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+    private boolean matchDirectories(Path path, Set<String> matchIncludes, Set<String> matchExcludes) {
+        return matchIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
+                && !matchExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
     }
 
     public boolean matchSafe(Path child) {
@@ -272,7 +292,7 @@ public class PathWatcher extends Thread {
     }
 
     public boolean match(Path path, String s) throws PatternSyntaxException {
-        s = ".*" + s + ".*";
+        //s = ".*" + s + ".*";;;
         boolean matches = path.toAbsolutePath().toString().matches(s)
                 || path.getFileName().toString().matches(s)
                 || path.getFileName().toString().equalsIgnoreCase(s);
@@ -283,11 +303,21 @@ public class PathWatcher extends Thread {
     }
 
     boolean matchFiles(Path path) throws IOException {
+
+        Config global = ConfigFactory.getInstance().getGlobalConfig();
         Config config = ConfigFactory.getInstance().getConfig(path);
-        boolean match = ConfigFactory.getInstance().isConfigFile(path)
-                || config.matchFileIncludes.isEmpty() || (config.matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !config.matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent()); // FIXME: absolutely
-        return match;
+
+        Set<String> matchFileIncludes = new HashSet<>();
+        Set<String> matchFileExcludes = new HashSet<>();
+        matchFileIncludes.addAll(global.matchFileIncludes);
+        matchFileIncludes.addAll(config.matchFileIncludes);
+        matchFileExcludes.addAll(global.matchFileExcludes);
+        matchFileExcludes.addAll(config.matchFileExcludes);
+
+        boolean matchIncludes = ConfigFactory.getInstance().isConfigFile(path)
+                || matchFileIncludes.isEmpty() || matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        boolean matchExcludes = matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        return matchIncludes && !matchExcludes;;
     }
 
 }

@@ -177,7 +177,7 @@ public class Commands {
                 if (lastNvv != null) {
                     Path path = Globals.buildArtifact.get(lastNvv);
                     String remove = hasher.hashes.remove(path.toString());
-                    eventWatcher.processChange(lastNvv);
+                    eventWatcher.processChange(lastNvv, true);
                 }
                 return TRUE;
             }
