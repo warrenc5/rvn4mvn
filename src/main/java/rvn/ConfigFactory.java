@@ -106,10 +106,12 @@ public class ConfigFactory {
     }
 
     Config loadDefaultConfiguration() throws IOException, ScriptException, URISyntaxException {
-        String base = System.getProperty("rvn.config", Globals.userHome + File.separatorChar + ".m2");
+        String base = System.getProperty("rvn.config", null);
         String name = base + File.separatorChar + ".rvn.json";
         ////System.out.println(System.getProperties().entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining("\n")));
         if (base == null || base.trim().length() == 0) {
+            base = System.getProperty("rvn.config", Globals.userHome + File.separatorChar + ".m2");
+            name = base + File.separatorChar + ".rvn.json";
             log.info("system property ${rvn.config} not set defaulting to " + name);
         } else {
             log.info("system property ${rvn.config} set " + base + ", resolving " + name);
@@ -213,7 +215,7 @@ public class ConfigFactory {
         }
         if (result.containsKey(key = "locations")) {
             List<String> v = (List) result.get(key);
-            locations.addAll(v.stream().filter(s -> !s.startsWith("!")).collect(toList()));
+            locations.addAll(v.stream().filter(s -> !s.startsWith("!")).filter(s2 -> !s2.contains("repository")).collect(toList()));
             log.fine(key + " " + locations.toString());
         }
         if (result.containsKey(key = "watchDirectories")) {
