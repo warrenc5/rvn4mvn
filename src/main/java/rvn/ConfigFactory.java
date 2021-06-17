@@ -23,9 +23,6 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
-
-import static rvn.Globals.thenFinished;
-import static rvn.Globals.thenStarted;
 import java.util.stream.Stream;
 import javax.json.Json;
 import javax.json.JsonObject;
@@ -38,6 +35,8 @@ import static rvn.Globals.baseConfig;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.configFileNames;
 import static rvn.Globals.locations;
+import static rvn.Globals.thenFinished;
+import static rvn.Globals.thenStarted;
 import static rvn.PathWatcher.keys;
 
 /**

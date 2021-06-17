@@ -177,7 +177,7 @@ public class Project {
                     this.lastChangeFile = path;
                 }
                 eventWatcher.processChange(nvv, path, immediate);
-                log.info(String.format("change triggered by config: %1$s %2$s", path, nvv));
+                log.info(String.format("change triggered by config: %1$s %2$s immediately: %3$s", path, nvv, immediate));
             } else {
                 log.info(String.format("change excluded by config: %1$s %2$s", path, nvv));
             }

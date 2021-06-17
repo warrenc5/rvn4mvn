@@ -317,7 +317,7 @@ public class PathWatcher extends Thread {
         boolean matchIncludes = ConfigFactory.getInstance().isConfigFile(path)
                 || matchFileIncludes.isEmpty() || matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
         boolean matchExcludes = matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
-        return matchIncludes && !matchExcludes;;
+        return matchIncludes && !matchExcludes;
     }
 
 }

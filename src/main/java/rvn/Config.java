@@ -130,4 +130,44 @@ public class Config {
         log.fine(projectKey + "  " + commands.get(projectKey).toString());
     }
 
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Config{mvnCmd=").append(mvnCmd);
+        sb.append(", showOutput=").append(showOutput);
+        sb.append(", interrupt=").append(interrupt);
+        sb.append(", settings=").append(settings);
+        sb.append(", reuseOutput=").append(reuseOutput);
+        sb.append(", daemon=").append(daemon);
+        sb.append(", processPlugin=").append(processPlugin);
+        sb.append(", mvnOpts=").append(mvnOpts);
+        sb.append(", javaHome=").append(javaHome);
+        sb.append(", mvnArgs=").append(mvnArgs);
+        sb.append(", batchWait=").append(batchWait);
+        sb.append(", timeout=").append(timeout);
+        sb.append(", commands=").append(commands);
+        sb.append(", lastCommand=").append(lastCommand);
+        sb.append(", mvnCmdMap=").append(mvnCmdMap);
+        sb.append(", batchWaitMap=").append(batchWaitMap);
+        sb.append(", timeoutMap=").append(timeoutMap);
+        sb.append(", interruptMap=").append(interruptMap);
+        sb.append(", settingsMap=").append(settingsMap);
+        sb.append(", mvnOptsMap=").append(mvnOptsMap);
+        sb.append(", javaHomeMap=").append(javaHomeMap);
+        sb.append(", mvnArgsMap=").append(mvnArgsMap);
+        sb.append(", reuseOutputMap=").append(reuseOutputMap);
+        sb.append(", showOutputMap=").append(showOutputMap);
+        sb.append(", daemonMap=").append(daemonMap);
+        sb.append(", processPluginMap=").append(processPluginMap);
+        sb.append(", matchFileIncludes=").append(matchFileIncludes);
+        sb.append(", matchFileExcludes=").append(matchFileExcludes);
+        sb.append(", matchDirIncludes=").append(matchDirIncludes);
+        sb.append(", matchDirExcludes=").append(matchDirExcludes);
+        sb.append(", matchArtifactIncludes=").append(matchArtifactIncludes);
+        sb.append(", matchArtifactExcludes=").append(matchArtifactExcludes);
+        sb.append(", configPath=").append(configPath);
+        sb.append('}');
+        return sb.toString();
+    }
+
 }

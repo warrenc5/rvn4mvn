@@ -233,6 +233,20 @@ public class Commands {
                     return FALSE;
                 }));
 
+        commandHandlers
+                .add(new CommandHandler("@@", "@@", "Show the configuration files.", (command) -> {
+                    if (command.equals("@@")) {
+                        try {
+                            log.info(Globals.config.toString());
+                            Globals.baseConfig.forEach((k, v) -> log.info(k.toString() + "=" + v.toString()));
+                        } catch (Exception ex) {
+                            log.warning("show " + ex.getMessage());
+                        }
+                        return TRUE;
+                    }
+                    return FALSE;
+                }));
+
         commandHandlers.add(new CommandHandler("\\", "\\", "List yet to build list", (command) -> {
             if (command.trim().equals("\\")) {
                 log.info(toBuild.stream()

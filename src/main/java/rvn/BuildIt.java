@@ -197,11 +197,12 @@ public class BuildIt extends Thread {
             }
         }
 
-        commandList = Globals.config.commands.entrySet().stream().
+        commandList = ConfigFactory.getInstance().getConfig(nvv).commands.entrySet().stream().
                 filter(e -> !e.getKey().equals("::"))
                 .filter(e -> commandMatch(e.getKey(), nvv, path))
                 .flatMap(e -> e.getValue().stream())
                 .collect(Collectors.toList());
+        log.warning("commands " + commandList);
 
         if (commandList.isEmpty()) {
             if (Globals.config.commands.containsKey("::")) {
@@ -620,7 +621,8 @@ public class BuildIt extends Thread {
                 log.warning(ANSI_GREEN + " " + buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " timedout");
             } else {
                 log.warning(ANSI_GREEN + " " + buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " build " + nvv.toString() + " completed with " + ex.getClass().getSimpleName() + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace()).subList(0, ex.getStackTrace().length).toString());
-                log.log(Level.SEVERE, ex.getMessage(), ex);
+                log.log(Level.SEVERE, ex.getMessage());
+                //log.log(Level.SEVERE, ex.getMessage(), ex);
             }
         } catch (TimeoutException | RuntimeException | InterruptedException | ExecutionException ex) {
             log.warning(ANSI_GREEN + " " + buildIndex.indexOf(nvv) + " " + ANSI_RED + "ERROR" + ANSI_RESET + " waiting for build " + nvv.toString() + " because " + ex.getClass().getSimpleName() + " " + ex.getMessage() + Arrays.asList(ex.getStackTrace()).subList(0, ex.getStackTrace().length).toString());
