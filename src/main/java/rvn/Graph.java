@@ -8,11 +8,9 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.logging.Logger;
 import static java.util.stream.Collectors.toList;
@@ -61,7 +59,16 @@ public class Graph<T> extends ConcurrentSkipListMap<T, Set<T>> {
     }
 
     public boolean contains(Edge edge) {
-        return this.containsKey(edge.nvv1) && this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
+        if (!this.containsKey(edge.nvv1)) {
+            return false;
+        }
+        if (edge.nvv2 == null) {
+            return true;
+        }
+        if (edge.nvv2.equals(edge.nvv1)) {
+            return true;
+        }
+        return this.getOrDefault(edge.nvv1, new HashSet<>()).contains(edge.nvv2);
     }
 
     public List<T> roots() {

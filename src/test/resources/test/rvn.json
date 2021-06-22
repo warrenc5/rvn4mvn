@@ -7,8 +7,6 @@ config = {
     "!mvnArgs": "-Dmaven.surefire.debug -DforkMode=never", // any valid argument to maven
     "!mvnCmd": "mvnDebug.cmd", //override the mvn command - automatically detects mvn.cmd on Microsoft
     "locations": [
-        "!/home/wozza/.m2/repository",
-        "/code/rvn4mvn",
     ],
 
     "watchDirectories": {
@@ -37,9 +35,8 @@ config = {
     },
     "buildCommands": {
         "::": "mvn -DskipTests clean install",
-        "/code/captcha/.*": "mvn -DskipTests -f %1$s -N install",
-        "mofokom:.*": [
-            "!mvn -DskipTests install"
+        "mofokom.*:.*": [
+            "mvn -DskipTests install"
         ]
     }
 }

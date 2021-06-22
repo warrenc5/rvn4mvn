@@ -7,6 +7,7 @@ import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -22,10 +23,24 @@ public class ImportFinder {
     private static final FileSystem fSystem = FileSystems.getDefault();
     private static final PathMatcher pathMatcher = fSystem.getPathMatcher("glob:*.java");
     private static final PathMatcher testMatcher = fSystem.getPathMatcher("glob:*Test.java");
+    private static ImportFinder instance;
     private final List<Path> paths;
+
+    static {
+        instance = new ImportFinder();
+    }
+
+    static ImportFinder getInstance() {
+        return instance;
+    }
 
     public ImportFinder(List<Path> paths) {
         this.paths = paths;
+
+    }
+
+    private ImportFinder() {
+        this.paths = new ArrayList<>();
     }
 
     private Set<PathMatcher> read(File file) throws IOException {
