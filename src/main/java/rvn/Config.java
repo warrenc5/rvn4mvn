@@ -33,7 +33,7 @@ public class Config {
     public Boolean showOutput = true;
     public Boolean interrupt;
     public String settings;
-    public Boolean reuseOutput;
+    public Boolean reuseOutput = true;
     public Boolean daemon = false;
     public Boolean processPlugin = false;
     public String mvnOpts;
@@ -41,7 +41,9 @@ public class Config {
     public String mvnArgs;
     public Duration batchWait;
     public Duration timeout;
+    public Boolean ignore = false;
 
+    public Map<String, String> env;
     public Map<String, List<String>> commands;
     public Map<NVV, String> lastCommand;
 
@@ -79,6 +81,7 @@ public class Config {
 
         batchWait = Duration.ofSeconds(0);
         interrupt = Boolean.FALSE;
+        env = new HashMap<>();
         lastCommand = new HashMap<>();
         mvnCmdMap = new HashMap<>();
         batchWaitMap = new HashMap<>();

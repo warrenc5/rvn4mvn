@@ -52,6 +52,7 @@ public class Globals {
     public static Map<NVV, Future> futureMap;
     public static Map<Integer, String> previousCmdIdx;
 
+
     public static NVV lastNvv;
     public static Path lastFile;
     public static Path lastChangeFile;
@@ -84,7 +85,7 @@ public class Globals {
         agProjects = new HashSet<>();
         properties = new HashMap<>();
         locations = new ConcurrentSkipListSet<>();
-        projects = new HashMap<>();
+        projects = new ConcurrentHashMap<>();
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
         repoArtifact = new LinkedHashMap<>();

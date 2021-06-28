@@ -490,6 +490,10 @@ public class Project {
             }
         }
 
+        if (bob.toString().equals(match)) {
+            bob = new StringBuilder(".*" + match + ".*");
+        }
+
         log.finest("matching " + match + " " + bob.toString());
         return bob.toString();
     }

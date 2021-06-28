@@ -110,6 +110,7 @@ public class EventWatcher extends Thread {
     }
 
     public NVV processChange(NVV nvv) {
+
         processChange(nvv, buildArtifact.get(nvv), false);
         return nvv;
     }
@@ -129,6 +130,11 @@ public class EventWatcher extends Thread {
             updated = Hasher.getInstance().update(path);
         }
 
+        if (!immediate && ConfigFactory.getInstance().getConfig(nvv).ignore) {
+            log.info(String.format(
+                    "ignored " + ANSI_CYAN + "%1$s" + ANSI_PURPLE + " %2$s" + ANSI_RESET,
+                    nvv.toString(), path));
+        }
         if (updated || immediate) {
             buildIt.scheduleFuture(nvv, immediate);
         }

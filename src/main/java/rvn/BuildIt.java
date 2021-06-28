@@ -73,7 +73,7 @@ public class BuildIt extends Thread {
     private Logger log = Logger.getLogger(this.getClass().getName());
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
     private static BuildIt instance;
-    ScheduledThreadPoolExecutor executor;
+    public ScheduledThreadPoolExecutor executor;
 
     static {
         instance = new BuildIt();
@@ -196,8 +196,8 @@ public class BuildIt extends Thread {
                 return commandList;
             }
         }
-
-        commandList = ConfigFactory.getInstance().getConfig(nvv).commands.entrySet().stream().
+        Map<String, List<String>> commands = ConfigFactory.getInstance().getConfig(nvv).commands;
+        commandList = commands.entrySet().stream().
                 filter(e -> !e.getKey().equals("::"))
                 .filter(e -> commandMatch(e.getKey(), nvv, path))
                 .flatMap(e -> e.getValue().stream())
@@ -309,7 +309,7 @@ public class BuildIt extends Thread {
     synchronized void build(NVV nvv) {
         NVV pNvv = parent.get(nvv);
 
-        if (pNvv != null && project.needsBuild(pNvv)) {
+        if (pNvv != null && Project.getInstance().needsBuild(pNvv)) {
             build(pNvv);
         }
         qBuild(nvv);
@@ -523,6 +523,11 @@ public class BuildIt extends Thread {
                         ProcessBuilder pb = new ProcessBuilder().directory(projectPath.getParent().toFile()).command(filteredArgs);
                         archive = redirectOutput(nvv, commandIndex, pb);
                         pb.environment().putAll(System.getenv());
+                        log.info("env overrides " + config.env.toString());
+
+                        pb.environment().putAll(config.env);
+                        log.info("env " + pb.environment().toString());
+
                         if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
                             pb.environment().put("MAVEN_OPTS", mvnOpts);
                         } else {

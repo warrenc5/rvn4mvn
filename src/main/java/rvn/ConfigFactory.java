@@ -214,7 +214,8 @@ public class ConfigFactory {
         }
         if (result.containsKey(key = "locations")) {
             List<String> v = (List) result.get(key);
-            locations.addAll(v.stream().filter(s -> !s.startsWith("!")).filter(s2 -> !s2.contains("repository")).collect(toList()));
+            locations.addAll(v.stream().filter(s -> !s.startsWith("!"))
+                    .collect(toList()));
             log.fine(key + " " + locations.toString());
         }
         if (result.containsKey(key = "watchDirectories")) {
@@ -271,6 +272,21 @@ public class ConfigFactory {
             } else if (v instanceof Map) {
                 ((Map<String, Object>) v).entrySet().forEach(e
                         -> config.addCommand(e.getKey(), optionalArray(e.getValue())));
+            }
+            log.fine(v.toString());
+
+            if (oNvv.isPresent()) {
+                log.fine("commands " + oNvv.toString() + " " + config.commands.get(oNvv.get().toString()));
+            }
+
+        }
+
+        if (result.containsKey(key = "env")) {
+            Object v = result.get(key);
+            if (v instanceof Map) {
+                ((Map<String, Object>) v).entrySet().forEach(e
+                        -> config.env.put(e.getKey(), e.getValue().toString()));
+
             }
             log.fine(v.toString());
 
@@ -360,6 +376,15 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
+        if (result.containsKey(key = "ignore")) {
+            Boolean v = (Boolean) result.get(key);
+            if (oNvv.isPresent()) {
+            } else {
+                config.showOutput = v;
+            }
+            log.fine(key + " " + v);
+        }
+
         if (result.containsKey(key = "reuseOutput")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
@@ -420,7 +445,9 @@ public class ConfigFactory {
         try {
             if (Files.isDirectory(path)) {
                 try (final Stream<Path> stream = Files.list(path)) {
-                    stream.filter((child) -> pathWatcher.matchSafe(child)).forEach(this::findConfiguration);
+                    stream.filter((child) -> pathWatcher.matchSafe(child))
+                            .filter(s2 -> !s2.toString().contains("repository"))
+                            .forEach(this::findConfiguration);
                 }
             } else if (path.getFileName() != null && configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
@@ -464,6 +491,7 @@ public class ConfigFactory {
         if (config == null) {
             return Globals.config;
         } else {
+            //log.info("using config " + configPath.toString());
             return config;
         }
     }

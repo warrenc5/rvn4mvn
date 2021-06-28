@@ -6,7 +6,7 @@ package rvn;
  */
 public class FlexiTuple {
 
-    Object[][] f = new Object[30000][3];
+    Object[][] f = new Object[300000][3];
     int y = 0;
 
     void put(Object... v) {

@@ -297,6 +297,13 @@
             <version>3.14.1</version>
         </dependency>
         <!--
+        <dependency>
+            <groupId>biz.mofokom.slee</groupId>
+            <artifactId>jain-slee-annotations-parent</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        -->
+        <!--
         <dependency> 
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
@@ -365,16 +372,19 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <version>5.4.0</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
             <version>5.4.0</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.hamcrest</groupId>
             <artifactId>hamcrest-all</artifactId>
             <version>1.3</version>
+            <scope>test</scope>
         </dependency>
         <!--
         <dependency>

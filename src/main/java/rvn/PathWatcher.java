@@ -18,12 +18,12 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.PatternSyntaxException;
@@ -83,7 +83,7 @@ public class PathWatcher extends Thread {
     public PathWatcher() throws IOException {
         watcher = FileSystems.getDefault().newWatchService();
         configFactory = ConfigFactory.getInstance();
-        keyPath = new HashMap<>();
+        keyPath = new ConcurrentHashMap<>();
         keys = new HashSet<>(locations.size());
     }
 
@@ -107,7 +107,8 @@ public class PathWatcher extends Thread {
             then = Instant.now();
         }
         try (Stream<Path> stream = Files.list(dir)) {
-            stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).forEach(this::watchRecursively);
+            Config config = ConfigFactory.getInstance().getConfig(dir);
+            stream.filter(child -> Files.isDirectory(child) && matchDirectories(child, config)).forEach(this::watchRecursively);
         } catch (IOException ex) {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         } finally {
@@ -197,13 +198,27 @@ public class PathWatcher extends Thread {
         registerPath(dir);
     }
 
-    public void registerPath(Path path) {
+    public void registerPath(final Path path) {
         try {
             log.finest(path.toString());
             if (Files.isDirectory(path)) {
-                try (Stream<Path> stream = Files.list(path)) {
-                    stream.sorted().filter(child -> matchSafe(child)).forEach(this::registerPath);
+                if (path.endsWith("repository")) {
+                    BuildIt.getInstance().executor.submit(new Runnable() {
+
+                        public void run() {
+                            try (Stream<Path> stream = Files.list(path)) {
+                                stream.sorted().filter(child -> matchSafe(child)).forEach(PathWatcher.this::registerPath);
+                            } catch (IOException ex) {
+                                log.info(
+                                        String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
+                            }
+                        }
+                    });
+                } else
+                        try (Stream<Path> stream = Files.list(path)) {
+                    stream.sorted().filter(child -> matchSafe(child)).forEach(PathWatcher.this::registerPath);
                 }
+
             } else if (path.toFile().toString().endsWith(".pom")) {
                 Optional<FileTime> lastest = PathWatcher.getInstance().watchRecursively(path.getParent().getParent()); // watch all versions
 
@@ -252,6 +267,10 @@ public class PathWatcher extends Thread {
         return child;
     }
 
+    private boolean matchDirectories(Path path, Config config) {
+        return this.matchDirectories(path, new HashSet(config.matchDirIncludes), new HashSet(config.matchDirExcludes));
+    }
+
     private boolean matchDirectories(Path path) {
         Config global = ConfigFactory.getInstance().getGlobalConfig();
         Config config = ConfigFactory.getInstance().getConfig(path);
@@ -292,7 +311,7 @@ public class PathWatcher extends Thread {
     }
 
     public boolean match(Path path, String s) throws PatternSyntaxException {
-        //s = ".*" + s + ".*";;;
+        s = ".*" + s + ".*";
         boolean matches = path.toAbsolutePath().toString().matches(s)
                 || path.getFileName().toString().matches(s)
                 || path.getFileName().toString().equalsIgnoreCase(s);

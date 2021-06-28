@@ -396,8 +396,8 @@ public class Commands {
                     }
                 }.apply(command)));
 
-        commandHandlers.add(new CommandHandler("/", "/", "Rebuild all projects in fail map.", (command) -> {
-            if (command.trim().equals("/")) {
+        commandHandlers.add(new CommandHandler("`", "`", "Rebuild all projects in fail map.", (command) -> {
+            if (command.trim().equals("`")) {
                 Globals.failMap.entrySet().stream().filter(e -> e.getValue() != null).forEach(e -> {
                     BuildIt.getInstance().build(e.getKey());
                 });
@@ -437,9 +437,9 @@ public class Commands {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("`", "`[:test:|#]",
+        commandHandlers.add(new CommandHandler("/", "/[:test:|#]",
                 "List known project(s) matching coordinate or path expression.", (command) -> {
-                    if (command.startsWith("`") && !command.equals("``")) {
+            if (command.startsWith("/") && !command.equals("//")) {
                         project.updateIndex();
                         String nvvMatch = command.substring(1);
                         if (nvvMatch.isBlank()) {
@@ -462,7 +462,7 @@ public class Commands {
                     return FALSE;
                 }));
 
-        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[`:num:,\\-]+", "100,3-5", "Builds the given project with the commands. To rebuild last use ``,  To list commands omit the second argument.", (command) -> {
+        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[`:num:,\\-]+", "100,3-5", "Builds the given project with the commands. To rebuild last use `,  To list commands omit the second argument.", (command) -> {
             Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
 
             Matcher matcher = re.matcher(command);
