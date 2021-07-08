@@ -67,6 +67,7 @@ public class Config {
     public List<String> matchArtifactIncludes;
     public List<String> matchArtifactExcludes;
     public Path configPath;
+    public boolean followLinks;
 
     public Config(Path configPath) {
         this.configPath = configPath;

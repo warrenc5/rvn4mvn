@@ -1,5 +1,6 @@
 package rvn;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -89,7 +90,10 @@ public class PathWatcher extends Thread {
 
     FlexiTuple ft = new FlexiTuple();
 
+    ThreadLocal<Boolean> warn = new ThreadLocal<Boolean>();
+
     public Optional<FileTime> watchRecursively(Path dir) {
+
         try {
             Thread.currentThread().yield();
         } catch (Exception x) {
@@ -102,16 +106,46 @@ public class PathWatcher extends Thread {
         }
         Instant then = null;
         lastDepth = depth;
-        watch(dir);
+
         if (depth >= 1) {
             then = Instant.now();
         }
+
+        Config config = ConfigFactory.getInstance().getConfig(dir);
+        List<LinkOption> option = new ArrayList<>();
+        LinkOption[] linkOptions = new LinkOption[option.size()];
+
+        if (!config.followLinks) {
+            option.add(LinkOption.NOFOLLOW_LINKS);
+        } else {
+            log.fine("following links in " + dir);
+        }
+
+        warn.set(false);
+
+        watch(dir);
         try (Stream<Path> stream = Files.list(dir)) {
-            Config config = ConfigFactory.getInstance().getConfig(dir);
-            stream.filter(child -> Files.isDirectory(child) && matchDirectories(child, config)).forEach(this::watchRecursively);
+            stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).map(child -> {
+                if (Files.isSymbolicLink(child) && !option.isEmpty()) {
+                    log.warning("dir links " + child + "  in " + dir + " use followLinks: true to follow");
+                    warn.set(true);
+                }
+                try {
+                    return child.toRealPath(option.toArray(linkOptions));
+                } catch (IOException ex) {
+                    Logger.getLogger(PathWatcher.class.getName()).log(Level.SEVERE, null, ex);
+                } finally {
+
+                }
+                return child;
+            }).forEach(this::watchRecursively);
         } catch (IOException ex) {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         } finally {
+
+            if (warn.get()) {
+                log.warning("not following links in " + dir + " use followLinks: true in config");
+            }
 
             if (depth > 1) {
                 Duration between = Duration.between(then, Instant.now());
@@ -123,25 +157,32 @@ public class PathWatcher extends Thread {
         try (Stream<Path> stream = Files.list(dir)) {
             return stream.map(child -> {
                 try {
-                    LinkOption option = LinkOption.NOFOLLOW_LINKS;
-                    return Files.getLastModifiedTime(child, option);
-                } catch (IOException e) {
-                    return null;
+                    return Files.getLastModifiedTime(child, linkOptions);
+                } catch (IOException x) {
+                    Util.log(log, x);
+                    return FileTime.fromMillis(0);
                 }
             }).max(FileTime::compareTo);
         } catch (IOException ex) {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         }
-
         return null;
     }
 
     public void watch(Path dir) {
+
         try {
             WatchKey key = dir.register(watcher, ENTRY_CREATE, ENTRY_DELETE, ENTRY_MODIFY);
-
+            if (keys.contains(key)) {
+                log.finest("key exisits " + dir + " " + key.toString());
+            } else {
+                log.finest("key add " + dir + " " + key.toString());
+            }
             keys.add(key);
-            keyPath.put(key, dir);
+            Path old = keyPath.put(key, dir);
+            if (old != null) {
+                log.finest("was old " + old + " " + dir);
+            }
             log.fine(String.format("watching %1$s %2$d", dir, key.hashCode()));
         } catch (IOException x) {
             Util.log(log, x);
@@ -160,6 +201,8 @@ public class PathWatcher extends Thread {
     public void scan(Set<String> locations) throws IOException {
         locations.stream().forEach(configFactory::findConfiguration);
         log.fine("locations :" + locations.toString().replace(',', '\n'));
+
+        locations.stream().map(Paths::get).forEach(this::watch);
         locations.stream().forEach(this::registerPath);
 
         log.fine("buildSet :" + buildPaths.toString().replace(',', '\n'));
@@ -220,7 +263,7 @@ public class PathWatcher extends Thread {
                 }
 
             } else if (path.toFile().toString().endsWith(".pom")) {
-                Optional<FileTime> lastest = PathWatcher.getInstance().watchRecursively(path.getParent().getParent()); // watch all versions
+                Optional<FileTime> lastest = this.watchRecursively(path.getParent().getParent()); // watch all versions
 
                 Optional<NVV> oNvv = Project.getInstance().processPom(path);
                 if (oNvv.isPresent() && lastest.isPresent()) {
@@ -230,12 +273,15 @@ public class PathWatcher extends Thread {
                 Optional<NVV> oNvv = Project.getInstance().processPom(path);
                 if (oNvv.isPresent()) {
                     Path parent = path.getParent();
-                    Optional<FileTime> lastest = watchRecursively(parent);
+                    log.fine("parent path " + parent);
+                    Optional<FileTime> lastest = this.watchRecursively(parent);
                     lastUpdate.put(oNvv.get(), lastest.get());
                 } else {
                     // logger.warning(String.format(ANSI_WHITE + "failed %1$s" + ANSI_RESET, path));
                 }
             } else {
+
+                //TODO filter 
                 paths.add(path);
             }
         } catch (IOException | SAXException | XPathExpressionException | ParserConfigurationException ex) {
@@ -268,7 +314,8 @@ public class PathWatcher extends Thread {
     }
 
     private boolean matchDirectories(Path path, Config config) {
-        return this.matchDirectories(path, new HashSet(config.matchDirIncludes), new HashSet(config.matchDirExcludes));
+        boolean match = this.matchDirectories(path, new HashSet(config.matchDirIncludes), new HashSet(config.matchDirExcludes));
+        return match;
     }
 
     private boolean matchDirectories(Path path) {
@@ -282,7 +329,8 @@ public class PathWatcher extends Thread {
         matchExcludes.addAll(global.matchDirExcludes);
         matchExcludes.addAll(config.matchDirExcludes);
 
-        return this.matchDirectories(path, matchIncludes, matchExcludes);
+        boolean match = this.matchDirectories(path, matchIncludes, matchExcludes);
+        return match;
     }
 
     private boolean matchDirectories(Path path, Set<String> matchIncludes, Set<String> matchExcludes) {
@@ -292,7 +340,8 @@ public class PathWatcher extends Thread {
 
     public boolean matchSafe(Path child) {
         try {
-            return (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
+            boolean match = (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
+            return match;
         } catch (IOException ex) {
             log.log(Level.SEVERE, ex.getMessage(), ex);
             return false;
@@ -311,7 +360,6 @@ public class PathWatcher extends Thread {
     }
 
     public boolean match(Path path, String s) throws PatternSyntaxException {
-        s = ".*" + s + ".*";
         boolean matches = path.toAbsolutePath().toString().matches(s)
                 || path.getFileName().toString().matches(s)
                 || path.getFileName().toString().equalsIgnoreCase(s);

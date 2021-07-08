@@ -356,6 +356,13 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
+        if (result.containsKey(key = "followLinks")) {
+            Boolean v = (Boolean) result.get(key);
+            config.followLinks = v;
+            log.fine(key + " " + v);
+        }
+
+
         if (result.containsKey(key = "daemon")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {

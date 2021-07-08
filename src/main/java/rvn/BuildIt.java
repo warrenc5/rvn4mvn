@@ -87,7 +87,7 @@ public class BuildIt extends Thread {
     private final Project project;
     private final ImportFinder iFinder;
 
-    private Graph<NVV> q ;
+    private Graph<NVV> q;
 
     public BuildIt() {
         this.setName("BuildIt");
@@ -263,7 +263,6 @@ public class BuildIt extends Thread {
             log.info("already building " + edge.toString());
         }
     }
-
 
     public synchronized void scheduleFuture(NVV nvv, boolean immediate) {
         Duration batchWait = immediate ? Duration.ZERO : ConfigFactory.getInstance().getConfig(nvv).batchWaitMap.getOrDefault(nvv, config.batchWait);
@@ -523,10 +522,12 @@ public class BuildIt extends Thread {
                         ProcessBuilder pb = new ProcessBuilder().directory(projectPath.getParent().toFile()).command(filteredArgs);
                         archive = redirectOutput(nvv, commandIndex, pb);
                         pb.environment().putAll(System.getenv());
-                        log.info("env overrides " + config.env.toString());
 
-                        pb.environment().putAll(config.env);
-                        log.info("env " + pb.environment().toString());
+                        if (!config.env.isEmpty()) {
+                            log.info("env overrides " + config.env.toString());
+                            pb.environment().putAll(config.env);
+                            log.finest("env " + pb.environment().toString());
+                        }
 
                         if (mvnOpts != null && !mvnOpts.trim().isEmpty()) {
                             pb.environment().put("MAVEN_OPTS", mvnOpts);

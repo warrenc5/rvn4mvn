@@ -1,8 +1,3 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
 package rvn;
 
 import java.io.IOException;
@@ -441,11 +436,19 @@ public class Commands {
                 "List known project(s) matching coordinate or path expression.", (command) -> {
             if (command.startsWith("/") && !command.equals("//")) {
                         project.updateIndex();
-                        String nvvMatch = command.substring(1);
-                        if (nvvMatch.isBlank()) {
-                            nvvMatch = ".*";
+                        String re = command.substring(1);
+                        if (re.toString().isBlank()) {
+                            re = ".*";
+                        } 
+
+                        if( !re.startsWith("^")){
+                            re = ".*" +re ;
                         }
-                        final String match = nvvMatch;
+                        if( !re.endsWith("$")){
+                            re = re + ".*";
+                        }
+
+                        final String match = re;
 
                         List<NVV> selected = buildArtifact.entrySet().stream()
                                 .filter(e -> project.matchNVV(e.getKey(), match) || pathWatcher.match(e.getValue(), match)).map(e -> e.getKey()).collect(Collectors.toList());
