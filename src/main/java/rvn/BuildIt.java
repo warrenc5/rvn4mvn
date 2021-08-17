@@ -83,8 +83,6 @@ public class BuildIt extends Thread {
         return instance;
     }
 
-    private final Hasher hasher;
-    private final Project project;
     private final ImportFinder iFinder;
 
     private Graph<NVV> q;
@@ -92,8 +90,6 @@ public class BuildIt extends Thread {
     public BuildIt() {
         this.setName("BuildIt");
         executor = new ScheduledThreadPoolExecutor(10, Rvn.tFactory);
-        this.hasher = Hasher.getInstance();
-        this.project = Project.getInstance();
         this.iFinder = ImportFinder.getInstance();
 
         this.setDefaultUncaughtExceptionHandler((e, t) -> {
@@ -356,10 +352,7 @@ public class BuildIt extends Thread {
     public void run() {
         log.info("waiting for builds");
         while (this.isAlive()) {
-            try {
-                Thread.currentThread().sleep(500l);
-            } catch (InterruptedException ex) {
-            }
+            Thread.currentThread().yield();
             if (this.q.isEmpty()) {
                 continue;
             } else if (q.size() >= 5) {
@@ -369,8 +362,12 @@ public class BuildIt extends Thread {
                 }
             } else {
             }
+            if (q.entrySet().isEmpty()) {
+                continue;
+            }
 
             log.info("have some builds");
+
             try (final Stream<NVV> path = q.paths2()) {
                 path.forEach((nvv) -> {
                     doBuildTimeout(nvv);

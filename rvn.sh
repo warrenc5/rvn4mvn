@@ -7,7 +7,7 @@ export PATH
 export LD_LIBRARY_PATH
 
 cd `dirname $0`
-MAVEN_OPTS="-Xms32m -Xmx256m"
+MAVEN_OPTS="-Xms64m -Xmx512m"
 MAVEN_OPTS="${MAVEN_OPTS} -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009"
 export MAVEN_OPTS
 
