@@ -19,6 +19,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toList;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_PURPLE;
@@ -253,7 +254,7 @@ public class Commands {
                                 lastBuild.getOrDefault(i, FileTime.from(Instant.now())).toInstant(),
                                 Instant.now()))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
-                if(toBuild.isEmpty()){
+                if (toBuild.isEmpty()) {
                     log.info("all builds good");
                 }
                 return TRUE;
@@ -295,12 +296,43 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("=", "=:test:", "List build commands for project", (command) -> {
             if (command.startsWith("=")) {
-                //TODO: make config based somehow.
+                Config config = null;
+                String arg = command.substring(1);
+                try {
+                    int index = Integer.parseInt(arg);
+                    NVV project = Globals.buildIndex.get(index);
+                    if (project != null) {
+                        arg = project.toString();
+                        config = ConfigFactory.getInstance().getConfig(project);
+                    }
 
-                log.info(config.commands.keySet().stream()
-                        .filter(i -> project.matchNVV(i, command.length() == 1 ? ".*" : command.substring(1)))
-                        .map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
-                        config.commands.get(i).stream()
+                } catch (IndexOutOfBoundsException x) {
+                } catch (NumberFormatException x) {
+                }
+                final Config config2 = config;
+                final String arg2 = arg;
+                //TODO: make config based somehow.
+                var shortList = Globals.config.commands.keySet().stream()
+                        .filter(
+                                i -> project.matchNVV(i, arg2)
+                        ).collect(toList());
+
+                log.info("global commands\n" + shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
+                        Globals.config.commands.get(i).stream()
+                                .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
+                                .collect(Collectors.joining("," + System.lineSeparator(),
+                                        System.lineSeparator(), ""))))
+                        .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
+
+                shortList = config.commands.keySet().stream()
+                        .filter(i -> project.matchNVV(i, arg2)).collect(toList());
+
+                if (shortList.isEmpty()) {
+                    log.info(String.format("no commands found for " + ANSI_CYAN + "%1$s " + ANSI_RESET, arg));
+                    return TRUE;
+                }
+                log.info(shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
+                        config2.commands.get(i).stream()
                                 .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
@@ -434,17 +466,17 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("/", "/[:test:|#]",
                 "List known project(s) matching coordinate or path expression.", (command) -> {
-            if (command.startsWith("/") && !command.equals("//")) {
+                    if (command.startsWith("/") && !command.equals("//")) {
                         project.updateIndex();
                         String re = command.substring(1);
                         if (re.toString().isBlank()) {
                             re = ".*";
-                        } 
-
-                        if( !re.startsWith("^")){
-                            re = ".*" +re ;
                         }
-                        if( !re.endsWith("$")){
+
+                        if (!re.startsWith("^")) {
+                            re = ".*" + re;
+                        }
+                        if (!re.endsWith("$")) {
                             re = re + ".*";
                         }
 

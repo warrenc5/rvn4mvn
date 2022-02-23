@@ -178,7 +178,7 @@ public class EventWatcher extends Thread {
             if (child.equals(config) || ConfigFactory.getInstance().isConfigFile(child)) {
                 try {
                     log.info(ANSI_RED + "config changed " + ANSI_GREEN + child + ANSI_RESET);
-                    ConfigFactory.getInstance().reloadConfiguration();
+                    ConfigFactory.getInstance().reloadConfiguration(child);
                 } catch (Throwable ex) {
                     log.log(Level.SEVERE, ex.getMessage(), ex);
                 }

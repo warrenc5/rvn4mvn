@@ -139,6 +139,10 @@ public class ConfigFactory {
         return Globals.config;
     }
 
+    public void reloadConfiguration(Path child) {
+        this.loadConfiguration(child);
+    }
+
     private Path loadConfiguration(Path configPath, NVV nvv) throws IOException, ScriptException, URISyntaxException {
 
         Globals.configs.add(configPath.toAbsolutePath());
@@ -364,7 +368,6 @@ public class ConfigFactory {
             log.fine(key + " " + v);
         }
 
-
         if (result.containsKey(key = "daemon")) {
             Boolean v = (Boolean) result.get(key);
             if (oNvv.isPresent()) {
@@ -473,7 +476,7 @@ public class ConfigFactory {
 
     private void createConfiguration(Path config) throws IOException {
         URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
-        try (Reader reader = new InputStreamReader(configURL.openStream()); Writer writer = new FileWriter(config.toFile());) {
+        try ( Reader reader = new InputStreamReader(configURL.openStream());  Writer writer = new FileWriter(config.toFile());) {
             while (reader.ready()) {
                 writer.write(reader.read());
             }
@@ -484,6 +487,18 @@ public class ConfigFactory {
 
     public Config getGlobalConfig() {
         return Globals.config;
+    }
+
+    public Config getConfig(String nvvMatch) {
+        var nvv = Globals.buildIndex.stream()
+                .filter(i -> project.matchNVV(i, nvvMatch)).findAny();
+
+        if (nvv.isPresent()) {
+            return this.getConfig(nvv.get());
+        } else {
+            log.warning("no config found for " + nvvMatch);
+            return Globals.config;
+        }
     }
 
     public Config getConfig(NVV nvv) {

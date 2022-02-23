@@ -499,6 +499,9 @@ public class Project {
     }
 
     public boolean matchNVV(String project, String match) {
+        if (project.equals("::")) {
+            return true;
+        }
         return project.matches(this.expandNVVRegex(match));
     }
 
