@@ -15,6 +15,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -29,7 +30,6 @@ import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.buildIndex;
 import static rvn.Globals.buildPaths;
-import static rvn.Globals.config;
 import static rvn.Globals.failMap;
 import static rvn.Globals.futureMap;
 import static rvn.Globals.lastBuild;
@@ -303,7 +303,7 @@ public class Commands {
                     NVV project = Globals.buildIndex.get(index);
                     if (project != null) {
                         arg = project.toString();
-                        config = ConfigFactory.getInstance().getConfig(project);
+                        config = Config.of(project);
                     }
 
                 } catch (IndexOutOfBoundsException x) {
@@ -317,9 +317,11 @@ public class Commands {
                                 i -> project.matchNVV(i, arg2)
                         ).collect(toList());
 
+                var l = new AtomicLong();
+
                 log.info("global commands\n" + shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
                         Globals.config.commands.get(i).stream()
-                                .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
+                                .map(c -> String.format(ANSI_GREEN +"%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET,l.getAndIncrement(), c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
@@ -327,13 +329,15 @@ public class Commands {
                 shortList = config.commands.keySet().stream()
                         .filter(i -> project.matchNVV(i, arg2)).collect(toList());
 
+                l.set(0);
+
                 if (shortList.isEmpty()) {
                     log.info(String.format("no commands found for " + ANSI_CYAN + "%1$s " + ANSI_RESET, arg));
                     return TRUE;
                 }
                 log.info(shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
                         config2.commands.get(i).stream()
-                                .map(c -> String.format(ANSI_WHITE + "    %1$s" + ANSI_RESET, c))
+                                .map(c -> String.format(ANSI_GREEN +"%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET, l.getAndIncrement(),c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));

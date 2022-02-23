@@ -550,7 +550,7 @@ public class ConfigFactory {
     public void toggleCommand(NVV nvv, String cmd) {
         Config config = Config.of(nvv);
 
-        config.commands.entrySet().stream().filter(e -> project.matchNVV(nvv, e.getKey())).map(e -> e.getValue()).forEach(list
+        config.commands.entrySet().stream().filter(e -> Project.getInstance().matchNVV(nvv, e.getKey())).map(e -> e.getValue()).forEach(list
                 -> {
             int i = list.indexOf(cmd);
             if (i >= 0) {
