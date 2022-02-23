@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
@@ -67,7 +69,7 @@ public class Globals {
     public static Instant thenStarted = null;
 
     static Map<NVV, String> lastCommand;
-    static List<Path> configs;
+    static Set<Path> configs;
 
     static {
         init();
@@ -75,12 +77,12 @@ public class Globals {
 
     public static void rehash() {
         buildArtifact = new LinkedHashMap<>(buildArtifact);
-        repoArtifact = new LinkedHashMap<>(repoArtifact);
+        repoArtifact = new ConcurrentSkipListMap<NVV, Path>(repoArtifact);
         parent = new LinkedHashMap<>(parent);
     }
 
     public static void init() {
-        configs = new ArrayList<>();
+        configs = new ConcurrentSkipListSet<>();
         baseConfig = new HashMap<>();
         agProjects = new HashSet<>();
         properties = new HashMap<>();
@@ -88,7 +90,8 @@ public class Globals {
         projects = new ConcurrentHashMap<>();
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
-        repoArtifact = new LinkedHashMap<>();
+        //repoArtifact = new LinkedHashMap<>();
+        repoArtifact = new ConcurrentSkipListMap<NVV, Path>();
         buildIndex = new ArrayList<>();
         buildPaths = new LinkedHashMap<>();
         toBuild = new CopyOnWriteArrayList<>();

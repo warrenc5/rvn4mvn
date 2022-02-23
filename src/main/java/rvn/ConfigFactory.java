@@ -116,7 +116,7 @@ public class ConfigFactory {
             log.info("system property ${rvn.config} set " + base + ", resolving " + name);
         }
 
-        Globals.configs.add(0, Paths.get(name));
+        Globals.configs.add(Paths.get(name));
 
         Globals.configs.forEach(path -> {
             if (path.toFile().isDirectory()) {
@@ -140,6 +140,8 @@ public class ConfigFactory {
     }
 
     private Path loadConfiguration(Path configPath, NVV nvv) throws IOException, ScriptException, URISyntaxException {
+
+        Globals.configs.add(configPath.toAbsolutePath());
         if (!configPath.startsWith("jar:") && !Files.exists(configPath)) {
             log.info(String.format("configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET + " doesn't exist, creating it", configPath));
             this.createConfiguration(configPath);

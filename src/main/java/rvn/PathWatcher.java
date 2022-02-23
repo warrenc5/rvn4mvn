@@ -1,6 +1,5 @@
 package rvn;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -33,6 +32,7 @@ import java.util.stream.Stream;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPathExpressionException;
 import org.xml.sax.SAXException;
+import static rvn.Ansi.ANSI_PURPLE;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.buildArtifact;
@@ -105,9 +105,11 @@ public class PathWatcher extends Thread {
         } else {
         }
         Instant then = null;
+        then = Instant.now();
+
         lastDepth = depth;
 
-        if (depth >= 1) {
+        if (depth >= 1) { //FIXME: only display timings for ??
             then = Instant.now();
         }
 
@@ -292,6 +294,7 @@ public class PathWatcher extends Thread {
 
     public void watchSummary() {
         Duration duration = Duration.between(thenFinished, Instant.now());
+        log.info(String.format("configfiles in use are : " + ANSI_PURPLE + "%1$s" + ANSI_RESET, Globals.configs.toString()));
         log.info(String.format(ANSI_WHITE + "watching %1$s projects, %2$s builds, %3$s are out of date,  %4$s keys - all in %5$s" + ANSI_RESET,
                 projects.size(), buildPaths.size(), toBuild.size(), keys.size(), duration.toString()));
     }
