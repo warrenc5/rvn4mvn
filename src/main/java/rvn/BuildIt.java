@@ -153,14 +153,28 @@ public class BuildIt extends Thread {
         });
     }
 
+    void buildAllCommands(NVV nvv) {
+    }
+
     void buildAllCommands(Integer i) {
 
         lastChangeFile = null;
 
-        if (buildIndex.size() > i) {
+        /*if (buildIndex.size() > i) {
             EventWatcher.getInstance().processChangeImmediatley(buildIndex.get(i));
-        }
+        }*/
     }
+
+    void buildACommand(NVV nvv, Integer i) {
+        var config = Config.of(nvv);
+        var commands = config.commands.get(nvv.toString());
+        String cmd = commands.get(i);
+        if(cmd.startsWith(Globals.INVERSE)) {
+            cmd = cmd.substring(1);
+        }
+        buildACommand(nvv,cmd);
+    }
+
     private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
 
     List<String> locateCommand(NVV nvv, Path path) {
@@ -182,7 +196,7 @@ public class BuildIt extends Thread {
                                 .map(p -> p.toString().substring(0, p.toString().length() - 5))
                                 .collect(Collectors.joining(","));
                     } catch (IOException ex) {
-                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage(), ex);
+                        log.log(Level.SEVERE, ex.getMessage(), ex);
                     }
                 }
                 //Pattern testRe = Pattern.compile("^.*src[:punct:]test[:punct:]java[:punct:](.*Test).java$");
@@ -399,7 +413,7 @@ public class BuildIt extends Thread {
         for (String command : commandList) {
             if (command.startsWith("!")) {
                 continue;
-            } else if ("exit".equals(command)) {
+            } else if ("exit".equals(command)) { //FIXME move this to commands
                 System.exit(0);
             }
             boolean block = true;
@@ -417,19 +431,19 @@ public class BuildIt extends Thread {
             } else {
                 result.thenCombineAsync(future, (b, v) -> b && v);
             }
-            result.exceptionally((x) -> {
+            result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
                 synchronized (q) {
                     q.truncate();
                 }
                 return true;
             });
         }
-        result.whenComplete((r, t) -> {
+        result.whenComplete((r, t) -> { //FIXME user handleAsync from doBuild
             if (r == true && t != null) {
                 buildDeps(nvv);
             }
         });
-        result.exceptionally((x) -> {
+        result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
             synchronized (q) {
                 q.truncate();
             }
@@ -479,8 +493,17 @@ public class BuildIt extends Thread {
         String[] args = commandFinal.split(" ");
         final List<String> filtered = Arrays.stream(args).filter((s) -> s.trim().length() > 0).collect(Collectors.toList());
         String settings = config.settingsMap.getOrDefault(nvv, Globals.config.settings);
-        log.info(settings);
+
+        if (settings == null) {
+            Path settingsPath = projectPath.getParent().resolve("settings.xml");
+            if (Files.exists(settingsPath)) {
+                log.info("auto detected settings " + settingsPath.toString());
+                settings = "settings.xml";
+            }
+        }
+
         if (settings != null) {
+            log.info(settings);
             Path settingsPath = projectPath.getParent().resolve(Paths.get(settings));
             if (Files.exists(settingsPath)) {
                 filtered.add(1, "-s");
@@ -506,7 +529,7 @@ public class BuildIt extends Thread {
                 try {
                     lockFile = Files.createFile(lockFile);
                 } catch (IOException ex) {
-                    Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, ex.getMessage());
+                    log.log(Level.SEVERE, ex.getMessage());
                 }
                 try {
                     Globals.thenStarted = Instant.now();
@@ -568,7 +591,7 @@ public class BuildIt extends Thread {
                         boolean deleted = Files.deleteIfExists(lockFile);
                         log.info("lock file deleted " + deleted);
                     } catch (IOException ex) {
-                        Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                        log.log(Level.SEVERE, null, ex);
                     }
                     if (daemon) {
                         Rvn.resetOut();
@@ -582,7 +605,7 @@ public class BuildIt extends Thread {
                             try {
                                 Rvn.writeFileToStdout(output);
                             } catch (IOException ex) {
-                                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+                                log.log(Level.SEVERE, null, ex);
                             }
                         }
                         throw new RuntimeException("exit code " + exit); //Boolean.FALSE);
@@ -597,7 +620,7 @@ public class BuildIt extends Thread {
             }
         };
 
-        return result.completeAsync(task, executor);
+        return result.completeAsync(task, executor); //FIXME use handle with handler
     }
 
     private void doBuildTimeout(NVV nvv) {

@@ -70,6 +70,7 @@ public class Globals {
 
     static Map<NVV, String> lastCommand;
     static Set<Path> configs;
+    public static String INVERSE = "!";
 
     static {
         init();

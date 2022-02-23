@@ -321,7 +321,7 @@ public class Commands {
 
                 log.info("global commands\n" + shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
                         Globals.config.commands.get(i).stream()
-                                .map(c -> String.format(ANSI_GREEN +"%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET,l.getAndIncrement(), c))
+                                .map(c -> String.format(ANSI_GREEN + "%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET, l.getAndIncrement(), c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
@@ -337,7 +337,7 @@ public class Commands {
                 }
                 log.info(shortList.stream().map(i -> String.format(ANSI_CYAN + "%1$s " + ANSI_RESET + "%2$s" + ANSI_RESET, i,
                         config2.commands.get(i).stream()
-                                .map(c -> String.format(ANSI_GREEN +"%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET, l.getAndIncrement(),c))
+                                .map(c -> String.format(ANSI_GREEN + "%1$s " + ANSI_WHITE + "    %2$s" + ANSI_RESET, l.getAndIncrement(), c))
                                 .collect(Collectors.joining("," + System.lineSeparator(),
                                         System.lineSeparator(), ""))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
@@ -501,7 +501,7 @@ public class Commands {
                     return FALSE;
                 }));
 
-        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[`:num:,\\-]+", "100,3-5", "Builds the given project with the commands. To rebuild last use `,  To list commands omit the second argument.", (command) -> {
+        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[^ `:num:,\\-]+", "100,3-5", "Builds the given project with the commands. To rebuild last use `,  To list commands omit the second argument.", (command) -> {
             Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
 
             Matcher matcher = re.matcher(command);
@@ -550,7 +550,7 @@ public class Commands {
             }
             return FALSE;
         }));
-        commandHandlers.add(new CommandHandler("[:num: ]+", "100 101 102", "Builds the project(s) for the given project number.", (command) -> {
+        commandHandlers.add(new CommandHandler("[:num: ]+", "100 101 102", "Builds the project(s) for the given project number in the given order.", (command) -> {
 
             Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> s.trim()).map(s -> {
                 try {
@@ -563,16 +563,24 @@ public class Commands {
             Integer i = null;
             Object o = null;
             StringBuilder cmd = new StringBuilder();
+            NVV nvv = null;
 
             OUTER:
             while (it.hasNext()) {
                 o = it.next();
 
                 if (o instanceof Integer) {
-                    if (i != null && cmd.length() == 0) {
-                        buildIt.buildAllCommands(i);
-                    }
                     i = (Integer) o;
+                    if (nvv == null) {
+                        nvv = Globals.buildIndex.get(i);
+                        if (nvv != null && !it.hasNext()) {
+                            buildIt.buildAllCommands(nvv);
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        buildIt.buildACommand(nvv, i);
+                    }
                     o = null;
                 } else if (o instanceof String) {
                     if (i == null) {
@@ -590,9 +598,9 @@ public class Commands {
                         }
                     }
 
-                    if (i != null && cmd.length() > 0) {
+                    if (nvv != null && cmd.length() > 0) {
 
-                        buildIt.buildACommand(i, cmd.toString());
+                        buildIt.buildACommand(nvv, cmd.toString());
                         cmd = new StringBuilder();
                         i = null;
                     }
@@ -601,7 +609,7 @@ public class Commands {
             }
 
             if (i != null && cmd.length() == 0) {
-                buildIt.buildAllCommands(i);
+                buildIt.build(nvv);
             }
 
             log.fine("swallowing command");
