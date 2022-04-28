@@ -471,7 +471,7 @@ public class ConfigFactory {
         }
     }
 
-    boolean isConfigFile(Path path) throws IOException {
+    public boolean isConfigFile(Path path) throws IOException {
         return (Files.exists(path) && Files.isSameFile(path, getConfig(path).configPath))
                 || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }

@@ -201,8 +201,8 @@ public class PathWatcher extends Thread {
     }
 
     public void scan(Set<String> locations) throws IOException {
+        log.info("locations :" + locations.toString().replace(',', '\n'));
         locations.stream().forEach(configFactory::findConfiguration);
-        log.fine("locations :" + locations.toString().replace(',', '\n'));
 
         locations.stream().map(Paths::get).forEach(this::watch);
         locations.stream().forEach(this::registerPath);

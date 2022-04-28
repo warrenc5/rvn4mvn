@@ -115,7 +115,21 @@ public class Rvn extends Thread {
 
     public Rvn(String[] args) throws Exception {
         this();
-        Globals.configs.addAll(Arrays.asList(args).stream().map(arg -> Path.of(arg)).collect(toList()));
+        Arrays.stream(args).map(arg -> Path.of(arg)).forEach(p -> {
+            try {
+                if (ConfigFactory.getInstance().isConfigFile(p)) {
+                    Globals.configs.add(p);
+                } else {
+                    Globals.locations.add(p.toAbsolutePath().normalize().toString());
+                }
+            } catch (IOException ex) {
+                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        });
+        if (Globals.locations.isEmpty()) {
+            Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
+        }
+
     }
 
     @Override
@@ -149,7 +163,6 @@ public class Rvn extends Thread {
         URL location = Rvn.class.getProtectionDomain().getCodeSource().getLocation();
         System.out.println("Code in  " + location.getFile());
         System.out.println("Running in " + Paths.get(".").toAbsolutePath().normalize().toString());
-        Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
         ConfigFactory.getInstance().loadDefaultConfiguration();
 
         project.updateIndex();
@@ -172,7 +185,7 @@ public class Rvn extends Thread {
 
     static void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
         if (tf != null) {
-            try (FileReader reader = new FileReader(tf)) {
+            try ( FileReader reader = new FileReader(tf)) {
                 char c[] = new char[1024];
                 while (reader.ready()) {
                     int l = reader.read(c);
