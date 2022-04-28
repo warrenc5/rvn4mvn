@@ -472,8 +472,9 @@ public class ConfigFactory {
     }
 
     public boolean isConfigFile(Path path) throws IOException {
-        return (Files.exists(path) && Files.isSameFile(path, getConfig(path).configPath))
-                || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+        Config config = getConfig(path); //FIXME should return global config?
+        return (Files.exists(path) && config!=null && Files.isSameFile(path, config.configPath))
+               || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private void createConfiguration(Path config) throws IOException {

@@ -126,6 +126,7 @@ public class Rvn extends Thread {
                 Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
             }
         });
+
         if (Globals.locations.isEmpty()) {
             Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
         }
