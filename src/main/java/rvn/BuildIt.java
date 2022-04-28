@@ -42,6 +42,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPathExpressionException;
 import org.codehaus.plexus.classworlds.launcher.Launcher;
 import org.xml.sax.SAXException;
+import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_PURPLE;
@@ -86,6 +87,7 @@ public class BuildIt extends Thread {
     private final ImportFinder iFinder;
 
     private Graph<NVV> q;
+    private boolean haveMvnD;
 
     public BuildIt() {
         this.setName("BuildIt");
@@ -95,6 +97,8 @@ public class BuildIt extends Thread {
         this.setDefaultUncaughtExceptionHandler((e, t) -> {
             log.log(Level.WARNING, e.getName() + " " + t.getMessage(), t);
         });
+
+        detectMavenDaemon();
         q = new Graph<>();
     }
 
@@ -169,10 +173,10 @@ public class BuildIt extends Thread {
         var config = Config.of(nvv);
         var commands = config.commands.get(nvv.toString());
         String cmd = commands.get(i);
-        if(cmd.startsWith(Globals.INVERSE)) {
+        if (cmd.startsWith(Globals.INVERSE)) {
             cmd = cmd.substring(1);
         }
-        buildACommand(nvv,cmd);
+        buildACommand(nvv, cmd);
     }
 
     private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
@@ -367,6 +371,13 @@ public class BuildIt extends Thread {
         log.info("waiting for builds");
         while (this.isAlive()) {
             Thread.currentThread().yield();
+            try {
+                Thread.currentThread().sleep(200l);
+
+            } catch (InterruptedException ex) {
+                Logger.getLogger(BuildIt.class
+                        .getName()).log(Level.SEVERE, null, ex);
+            }
             if (this.q.isEmpty()) {
                 continue;
             } else if (q.size() >= 5) {
@@ -487,7 +498,12 @@ public class BuildIt extends Thread {
         if (daemon) {
             command = command.replace("mvn ", "-Drvn.mvn");
         } else {
-            command = command.replace("mvn ", mvnCmd + " ");
+
+            if (haveMvnD) {
+                command = command.replace("mvn ", "mvnd "); //FIXME: for windows
+            } else {
+                command = command.replace("mvn ", mvnCmd + " ");
+            }
         }
         final String commandFinal = String.format(command, projectPath);
         String[] args = commandFinal.split(" ");
@@ -505,7 +521,7 @@ public class BuildIt extends Thread {
         if (settings != null) {
             log.info(settings);
             Path settingsPath = projectPath.getParent().resolve(Paths.get(settings));
-            if (Files.exists(settingsPath)) {
+            if (command.startsWith(mvn) && Files.exists(settingsPath)) {
                 filtered.add(1, "-s");
                 filtered.add(2, settingsPath.toAbsolutePath().toString());
             } else {
@@ -526,6 +542,8 @@ public class BuildIt extends Thread {
                 Process p = null;
                 boolean timedOut = false;
                 Path lockFile = projectPath.getParent().resolve(Rvn.lockFileName);
+                var timeout = config.timeoutMap.getOrDefault(nvv, config.timeout);
+
                 try {
                     lockFile = Files.createFile(lockFile);
                 } catch (IOException ex) {
@@ -534,11 +552,11 @@ public class BuildIt extends Thread {
                 try {
                     Globals.thenStarted = Instant.now();
                     if (daemon) {
-                        log.info("running in process " + filtered.toString());
+                        log.info(String.format("running in process " + ANSI_WHITE + " %1$s" + ANSI_YELLOW + " %2$s" + ANSI_RESET, filtered.toString(), timeout.toString()));
                         archive = redirectOutput(nvv, commandIndex, null);
                         exit = Launcher.mainWithExitCode(filteredArgs);
                     } else {
-                        log.info("spawning new process " + filtered.toString());
+                        log.info(String.format("spawning new process " + ANSI_BOLD + ANSI_WHITE + " %1$s" + ANSI_RESET + ANSI_YELLOW + " %2$s" + ANSI_RESET, filtered.toString(), timeout.toString()));
                         ProcessBuilder pb = new ProcessBuilder().directory(projectPath.getParent().toFile()).command(filteredArgs);
                         archive = redirectOutput(nvv, commandIndex, pb);
                         pb.environment().putAll(System.getenv());
@@ -573,7 +591,7 @@ public class BuildIt extends Thread {
                         Globals.processMap.put(projectPath, p);
                         CompletableFuture<Process> processFuture = p.onExit();
                         //lock.unlock();
-                        if (!p.waitFor(config.timeoutMap.getOrDefault(nvv, config.timeout).toMillis(), TimeUnit.MILLISECONDS)) {
+                        if (!p.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                             timedOut = true;
                             stopBuild(nvv);
                         }
@@ -599,7 +617,7 @@ public class BuildIt extends Thread {
                         processMap.remove(projectPath);
                         exit = p.exitValue();
                     }
-                    log.info(String.format(ANSI_GREEN + "%6$d " + ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED) + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET + " with command " + ANSI_WHITE + "%3$s" + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s", nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : "", buildIndex.indexOf(nvv)));
+                    log.info(String.format(ANSI_GREEN + "%6$d " + ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED) + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET + " with command " + ANSI_BOLD + ANSI_WHITE + "%3$s" + ANSI_RESET + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s", nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : "", buildIndex.indexOf(nvv)));
                     if (exit != 0) {
                         if (output != null) {
                             try {
@@ -796,6 +814,23 @@ public class BuildIt extends Thread {
     public String removeDebug(String s) {
         String s2 = s.replaceFirst("-Xrunjdwp:[0-9A-Za-z_,=]+", "");
         return s2;
+    }
+
+    private void detectMavenDaemon() {
+        try {
+            new ProcessBuilder("mvnd", "--status").start().onExit().handle((p, t) -> {
+                if (p.exitValue() == 0) {
+                    log.info(ANSI_BOLD + ANSI_YELLOW + "maven daemon mvnd detected, using" + ANSI_RESET);
+                    haveMvnD = true;
+                    return true;
+
+                }
+                return false;
+            });
+        } catch (IOException ex) {
+            Logger.getLogger(BuildIt.class.getName()).log(Level.SEVERE, null, ex);
+        }
+
     }
 
 }

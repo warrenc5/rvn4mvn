@@ -30,6 +30,8 @@
                     <archive>
                         <manifest>
                             <mainClass>rvn.Rvn</mainClass>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                            <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
                         </manifest>
                     </archive>
                 </configuration>
@@ -56,16 +58,19 @@
                             <execution>
                                 <phase>integration-test</phase>
                                 <goals>
-                                    <goal>java</goal>
+                                    <goal>exec</goal>
                                 </goals>
                             </execution>
                         </executions>
                         <configuration>
-                            <mainClass>rvn.Rvn</mainClass>
+                            <executable>java</executable>
                             <arguments>
+                                <argument>-cp</argument>
+                                <classpath/>
+                                <argument>-agentlib:native-image-agent=config-output-dir=${basedir}/target/native-image/</argument>
                                 <!-- <argument>-Xbootclasspath/p:${m2.home}</argument> -->
+                                <argument>rvn.Rvn</argument>
                             </arguments>
-                            <fork>false</fork>
                             <systemProperties>
                                 <systemProperty>
                                     <key>rvn.config</key>
@@ -125,49 +130,49 @@
                         </executions>
                     </plugin>
                     <!--
+                            <plugin>
+                                <groupId>org.codehaus.mojo</groupId>
+                                <artifactId>animal-sniffer-maven-plugin</artifactId>
+                                <version>1.18</version>
+                                <configuration>
+                                    <skip>true</skip>
+                                    <signature>
+                                        <groupId>org.codehaus.mojo.signature</groupId>
+                                        <artifactId>java18</artifactId>
+                                        <version>1.0</version>
+                                    </signature>
+                                    <includeClasses>
+                                        <includeClass>
+                                            jdk.nashorn.api.scripting.ScriptObjectMirror
+                                        </includeClass>
+                                    </includeClasses>
+                                </configuration>
+                                <executions>
+                                    <execution>
+                                        <id>animal-sniffer</id>
+                                        <phase>validate</phase>
+                                        <goals>
+                                            <goal>check</goal>
+                                        </goals>
+        
+                                    </execution>
+                                </executions>
+                            </plugin>
+                    -->
                     <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>animal-sniffer-maven-plugin</artifactId>
-                        <version>1.18</version>
-                        <configuration>
-                            <skip>true</skip>
-                            <signature>
-                                <groupId>org.codehaus.mojo.signature</groupId>
-                                <artifactId>java18</artifactId>
-                                <version>1.0</version>
-                            </signature>
-                            <includeClasses>
-                                <includeClass>
-                                    jdk.nashorn.api.scripting.ScriptObjectMirror
-                                </includeClass>
-                            </includeClasses>
-                        </configuration>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.9.9</version>
                         <executions>
                             <execution>
-                                <id>animal-sniffer</id>
-                                <phase>validate</phase>
                                 <goals>
-                                    <goal>check</goal>
-                                </goals>
-
-                            </execution>
-                        </executions>
-                    </plugin>
-            -->
-                    <plugin>
-                        <groupId>com.oracle.substratevm</groupId>
-                        <artifactId>native-image-maven-plugin</artifactId>
-                        <version>21.1.0</version>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>native-image</goal>
+                                    <goal>build</goal>
                                 </goals>
                                 <phase>package</phase>
                             </execution>
                         </executions>
                         <configuration>
-                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:ResourceConfigurationResources=resources.json -H:JNIConfigurationResources=jni.json --language:js --report-unsupported-elements-at-runtime</buildArgs>
+                            <buildArgs>--static -H:+ReportExceptionStackTraces -H:ResourceConfigurationResources=resources.json -H:JNIConfigurationResources=jni.json --language:js --report-unsupported-elements-at-runtime -H:IncludeResourceBundles=com.sun.org.apache.xml.internal.res.XMLErrorResources</buildArgs>
                             <imageName>rvn</imageName>
                         </configuration>
                     </plugin>
@@ -291,7 +296,7 @@
             <artifactId>graalson</artifactId>
             <version>1.0.1</version>
         </dependency>
-         <dependency>
+        <dependency>
             <groupId>org.jline</groupId>
             <artifactId>jline</artifactId>
             <version>3.14.1</version>
@@ -387,13 +392,13 @@
             <scope>test</scope>
         </dependency>
         <!--
-        <dependency>
-            <groupId>org.junit.vintage</groupId>
-            <artifactId>junit-vintage-engine</artifactId>
-            <version>5.4.0</version>
-            <scope>test</scope>
-        </dependency>
-                -->
+<dependency>
+    <groupId>org.junit.vintage</groupId>
+    <artifactId>junit-vintage-engine</artifactId>
+    <version>5.4.0</version>
+    <scope>test</scope>
+</dependency>
+        -->
         <dependency>
             <groupId>org.graalvm.truffle</groupId>
             <artifactId>truffle-api</artifactId>
@@ -401,14 +406,17 @@
             <type>jar</type>
         </dependency>
         <dependency>
-            <groupId>javax</groupId>
-            <artifactId>javaee-api</artifactId>
-            <version>7.0</version>
-            <type>jar</type>
+            <groupId>jakarta.xml.bind</groupId>
+            <artifactId>jakarta.xml.bind-api</artifactId>
+            <version>3.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.json</groupId>
+            <artifactId>jakarta.json-api</artifactId>
+            <version>2.1.0</version>
         </dependency>
     </dependencies>
-    <distributionManagement
-        xmlns:mvn="http://maven.apache.org/POM/4.0.0">
+    <distributionManagement xmlns:mvn="http://maven.apache.org/POM/4.0.0">
         <snapshotRepository>
             <id>mofokom-public</id>
             <name>mofokom-public</name>

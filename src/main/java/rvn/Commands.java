@@ -579,7 +579,7 @@ public class Commands {
                             continue;
                         }
                     } else {
-                        buildIt.buildACommand(nvv, i);
+                        buildIt.buildACommand(nvv, i); //FIX ME just build the project not the command --there is another handler to do this.
                     }
                     o = null;
                 } else if (o instanceof String) {

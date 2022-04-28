@@ -86,6 +86,8 @@ public class Rvn extends Thread {
             Thread t;
 
             t = new Thread(r);
+            t.setName(r.getClass().getSimpleName());
+
             t.setUncaughtExceptionHandler(new UncaughtExceptionHandler() {
                 @Override
                 public void uncaughtException(Thread t, Throwable e) {
@@ -131,7 +133,7 @@ public class Rvn extends Thread {
 
         while (this.isAlive()) {
             try {
-                Thread.currentThread().sleep(500l);
+                Thread.currentThread().sleep(200l);
             } catch (InterruptedException ex) {
             }
         }

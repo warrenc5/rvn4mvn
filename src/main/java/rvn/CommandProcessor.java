@@ -91,7 +91,9 @@ public class CommandProcessor {
         log.info(String.format(ANSI_YELLOW + "%1$s" + ANSI_RESET + " last build finished " + ANSI_YELLOW + "%2$s" + ANSI_RESET + " ago. last build started " + ANSI_YELLOW + "%3$s" + ANSI_RESET + " ago.",
                 LocalTime.now(), Duration.between(thenFinished, Instant.now()).toString(), Duration.between(thenStarted, Instant.now()).toString()));
 
-        Optional<Boolean> handled = commandHandlers.stream().map(c -> c.apply(command))
+        Optional<Boolean> handled = commandHandlers.stream().map(
+                c -> c.apply(command)
+        )
                 .filter(b -> Boolean.TRUE.equals(b)).findFirst();
         if (handled.isPresent()) {
             if (handled.get().booleanValue()) {
@@ -109,6 +111,7 @@ public class CommandProcessor {
             splt = Spliterators.spliterator(iterator, Long.MAX_VALUE,
                     Spliterator.ORDERED | Spliterator.NONNULL);
             this.iterator = iterator;
+            this.setName(this.getClass().getSimpleName());
         }
 
         public void run() {

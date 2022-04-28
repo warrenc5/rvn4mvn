@@ -60,6 +60,11 @@ public class EventWatcher extends Thread {
 
         log.info("watching for changes");
         while (this.isAlive()) {
+            try {
+                Thread.currentThread().sleep(200l);
+            } catch (InterruptedException ex) {
+                Logger.getLogger(EventWatcher.class.getName()).log(Level.SEVERE, null, ex);
+            }
             Thread.yield();
 
             if (System.currentTimeMillis() - lastEvent >= 400 && events.size() > 0) {

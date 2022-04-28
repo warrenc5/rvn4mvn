@@ -100,7 +100,7 @@ public class Graph<T> extends ConcurrentSkipListMap<T, Set<T>> {
         }
 
         public GraphIterator(Collection<K> c) {
-            log("init " + c.toString() + " " + current + " " + it.size());
+            log("init graph:" + c.toString() + " current:" + current + " commands:" + it.size());
             lit = c.iterator();
         }
 

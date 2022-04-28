@@ -26,7 +26,7 @@ public class CommandHandler implements Function<String, Boolean> {
     public Boolean apply(String t) {
         boolean applied = this.fun.apply(t);
         if (applied) {
-            log.info("handled by " + verb);
+            log.info("handled by " + verb + " " + description);
         }
         return applied;
     }

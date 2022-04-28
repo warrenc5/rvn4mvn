@@ -29,6 +29,8 @@ import javax.json.JsonObject;
 import javax.json.JsonReader;
 import javax.script.Bindings;
 import javax.script.ScriptException;
+import static rvn.Ansi.ANSI_BOLD;
+import static rvn.Ansi.ANSI_RED;
 import static rvn.Ansi.ANSI_RESET;
 import static rvn.Ansi.ANSI_WHITE;
 import static rvn.Globals.baseConfig;
@@ -561,8 +563,10 @@ public class ConfigFactory {
 
     public String toggleCommand(String cmd) {
         if (cmd.startsWith("!")) {
+            log.info(String.format("toggle command "+ ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " on" + ANSI_RESET,cmd));
             return cmd.substring(1);
         } else {
+            log.info(String.format("toggle command "+ ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " off" + ANSI_RESET,cmd));
             return "!" + cmd;
         }
     }

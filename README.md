@@ -12,6 +12,8 @@ Features
 * Watches project directories with pom.xml
 * Build dependency graph and recompiles all affected projects.
 * Custom mvn commands for each project
+* Uses settings.xml file in project directory
+* Automatically detects maven daemon and uses that.
 
 After installing 
 set in your .profile
