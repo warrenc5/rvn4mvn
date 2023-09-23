@@ -8,12 +8,13 @@ export LD_LIBRARY_PATH
 
 cd `dirname $0`
 MAVEN_OPTS="-Xms64m -Xmx512m"
-MAVEN_OPTS="${MAVEN_OPTS} -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009"
+EXEC_OPTS="-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=5009"
 export MAVEN_OPTS
 
 while [ true ] ; do 
 #mvn -v 
-mvn -Prun 
+#mvn -s ~/.m2/settings.xml.none -DskipTests install
+mvn -Prun -Dexec.opts="$EXEC_OPTS" -Drvn.args="$@"
 #-Drvn.config=/Users/wc104415/.m2/
 sleep 1
 done

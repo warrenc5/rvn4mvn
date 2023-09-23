@@ -115,11 +115,14 @@ public class Rvn extends Thread {
 
     public Rvn(String[] args) throws Exception {
         this();
+        
         Arrays.stream(args).map(arg -> Path.of(arg)).forEach(p -> {
             try {
                 if (ConfigFactory.getInstance().isConfigFile(p)) {
                     Globals.configs.add(p);
                 } else {
+                    ConfigFactory.getInstance().scanForConfigs(p);
+                    log.info("adding " + p.toAbsolutePath().normalize().toString());
                     Globals.locations.add(p.toAbsolutePath().normalize().toString());
                 }
             } catch (IOException ex) {
@@ -127,16 +130,14 @@ public class Rvn extends Thread {
             }
         });
 
-        if (Globals.locations.isEmpty()) {
-            Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
-        }
 
     }
 
     @Override
     public void run() {
         try {
-            commandProcessor.processStdInOld();
+            //commandProcessor.processStdInOld();
+            commandProcessor.processStdIn();
         } catch (IOException ex) {
             log(log, ex);
         } catch (Exception ex) {
@@ -165,7 +166,7 @@ public class Rvn extends Thread {
         System.out.println("Code in  " + location.getFile());
         System.out.println("Running in " + Paths.get(".").toAbsolutePath().normalize().toString());
         ConfigFactory.getInstance().loadDefaultConfiguration();
-
+        ConfigFactory.getInstance().addDefaultLocation();
         project.updateIndex();
 
     }

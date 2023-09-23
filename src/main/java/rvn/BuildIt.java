@@ -333,16 +333,20 @@ public class BuildIt extends Thread {
         try {
             NVV pNvv = Globals.parent.get(nvv);
 
-            /**
-             * if (pNvv != null) { //AND parent is in buildArtifacts
-             * buildDeps(pNvv); }*
-             */
+            if (pNvv != null) { //AND parent is in buildArtifacts
+                buildDeps(pNvv);
+            }
+
+            //TODO build pre-requisites if available 
+            //FIXME create listeners for .poms
             List<NVV> deps = projects.entrySet().stream()
                     //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
                     .flatMap(e -> Project.getInstance().projectDepends(nvv))
                     .filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
                     .filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
                     .distinct().collect(toList());
+
+            log.info("requested to build " + nvv.toString());
 
             if (deps.isEmpty()) {
                 qBuild(nvv, nvv);
@@ -449,17 +453,19 @@ public class BuildIt extends Thread {
                 return true;
             });
         }
-        result.whenComplete((r, t) -> { //FIXME user handleAsync from doBuild
-            if (r == true && t != null) {
-                buildDeps(nvv);
-            }
-        });
-        result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
-            synchronized (q) {
-                q.truncate();
-            }
-            return true;
-        });
+        if (result != null) { //WTF? this is the chained result 
+            result.whenComplete((r, t) -> { //FIXME user handleAsync from doBuild
+                if (r == true && t != null) {
+                    buildDeps(nvv);
+                }
+            });
+            result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
+                synchronized (q) {
+                    q.truncate();
+                }
+                return true;
+            });
+        }
         if (result == null) {
             log.info("no commands to build");
         }
@@ -476,13 +482,12 @@ public class BuildIt extends Thread {
         String mvnOpts = config.mvnOptsMap.getOrDefault(nvv, Globals.config.mvnOpts);
         String javaHome = config.javaHomeMap.getOrDefault(nvv, Globals.config.javaHome);
         String mvn = "mvn ";
+        boolean directMvn = false;
         int commandIndex = calculateCommandIndex(nvv, command, projectPath);
         if (command.indexOf(mvn) >= 0 && command.indexOf("-f") == -1) {
             command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -f %1$s ").toString();
         }
-        if (agProjects.contains(nvv)) {
-            command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -N ").toString();
-        }
+
         String cmd = String.format(command, ANSI_PURPLE + projectPath + ANSI_WHITE) + ANSI_RESET;
         if (command.isEmpty()) {
             log.info(String.format("already running " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, command));
@@ -492,17 +497,25 @@ public class BuildIt extends Thread {
             log.fine(String.format("building " + ANSI_CYAN + "%1$s " + ANSI_WHITE + "%2$s" + ANSI_RESET, nvv, cmd));
         }
         if (command.contains(mvn)) {
+            directMvn = true;
             command = command + " " + config.mvnArgsMap.getOrDefault(nvv, config.mvnArgs) + " ";
         }
-        boolean daemon = config.daemonMap.getOrDefault(nvv, config.daemon) && command.contains(mvn);
-        if (daemon) {
-            command = command.replace("mvn ", "-Drvn.mvn");
-        } else {
 
-            if (haveMvnD) {
-                command = command.replace("mvn ", "mvnd "); //FIXME: for windows
+        boolean daemon = config.daemonMap.getOrDefault(nvv, config.daemon) && command.contains(mvn);
+        if (directMvn) {
+            if (directMvn && agProjects.contains(nvv)) {
+                command = new StringBuilder(command).insert(command.indexOf(mvn) + mvn.length(), " -N ").toString();
+            }
+
+            if (daemon) {
+                command = command.replace("mvn ", "-Drvn.mvn");
             } else {
-                command = command.replace("mvn ", mvnCmd + " ");
+
+                if (haveMvnD) {
+                    command = command.replace("mvn ", "mvnd "); //FIXME: for windows
+                } else {
+                    command = command.replace("mvn ", mvnCmd + " ");
+                }
             }
         }
         final String commandFinal = String.format(command, projectPath);
@@ -617,7 +630,7 @@ public class BuildIt extends Thread {
                         processMap.remove(projectPath);
                         exit = p.exitValue();
                     }
-                    log.info(String.format(ANSI_GREEN + "%6$d " + ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED) + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET + " with command " + ANSI_BOLD + ANSI_WHITE + "%3$s" + ANSI_RESET + ANSI_YELLOW + " %4$s" + ANSI_RESET + "\n%5$s", nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : "", buildIndex.indexOf(nvv)));
+                    log.info(String.format((exit == 0 ? ANSI_GREEN : ANSI_RED) + "%6$d " + ANSI_CYAN + "%1$s " + ANSI_RESET + ((exit == 0) ? ANSI_GREEN : ANSI_RED) + (timedOut ? "TIMEDOUT" : (exit == 0 ? "PASSED" : "FAILED")) + " (%2$s)" + ANSI_RESET + " with command " + ANSI_BOLD + ANSI_WHITE + "%3$s" + ANSI_RESET + ANSI_YELLOW + " %4$s" + ANSI_RESET + (exit == 0 ? ANSI_GREEN : ANSI_RED) + "\n%5$s " + ANSI_PURPLE + "\n%6$s %7$s %8$s" + ANSI_RESET, nvv, exit, commandFinal, Duration.between(then, Instant.now()), output != null ? output : "", buildIndex.indexOf(nvv), nvv.path, (nvv.parent != null ? nvv.parent.path : "")));
                     if (exit != 0) {
                         if (output != null) {
                             try {

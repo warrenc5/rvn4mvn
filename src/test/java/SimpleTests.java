@@ -3,8 +3,10 @@ import static java.lang.Boolean.TRUE;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -13,6 +15,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 import rvn.Globals;
+import rvn.NVV;
 import rvn.Rvn;
 import rvn.SimpleCommand;
 import rvn.Util;
@@ -24,6 +27,7 @@ import rvn.Util;
 public class SimpleTests {
 
     private Logger log = Logger.getLogger(SimpleTests.class.getName());
+
     @Test
     public void testCommand() throws Exception {
         String regex = "^a ([0-9])$";
@@ -86,8 +90,20 @@ public class SimpleTests {
         Globals.config.matchDirExcludes.add(".*system32.*");
         Globals.config.matchDirExcludes.add("system32");
         Path p = Path.of("C:", "windows", "system32");
-        log.info(p.toString() + " "+ Files.exists(p));
+        log.info(p.toString() + " " + Files.exists(p));
         boolean m = rvn.getPathWatcher().matchSafe(p);
         assertFalse(m);
+    }
+
+    @Test
+    public void testNvvHashcode() {
+        Map<NVV, String> projects = new HashMap<>();
+
+        NVV nvv = new NVV("group", "mine", "1.9");
+        NVV nvv2 = new NVV("group", "mine", "2.9");
+
+        projects.put(nvv, "yes");
+        assertEquals(true, projects.containsKey(nvv2));
+        assertEquals("yes", projects.get(nvv2));
     }
 }

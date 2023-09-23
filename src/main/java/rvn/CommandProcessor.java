@@ -18,6 +18,11 @@ import java.util.logging.Logger;
 import java.util.stream.StreamSupport;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.ParsedLine;
+import org.jline.reader.Parser;
+import org.jline.reader.SyntaxError;
+import org.jline.reader.UserInterruptException;
+import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import static rvn.Ansi.ANSI_RESET;
@@ -42,17 +47,25 @@ public class CommandProcessor {
         thenStarted = Instant.now();
     }
 
-    private void processStdIn() throws IOException {
+    public void processStdIn() throws IOException {
         final Terminal terminal = TerminalBuilder.builder()
-                .system(true)
+                //.system(true)
+                //.color(true)
+                //.streams(System.in, System.out)
+                .jna(true)
                 .build();
+        DefaultHistory history = null;
+
         final LineReader lineReader
                 = LineReaderBuilder.builder()
                         .terminal(terminal)
+                        .history(history = new DefaultHistory())
                         //.completer(new MyCompleter())
                         //.highlighter(new MyHighlighter())
                         //.parser(new MyParser())
                         .build();
+
+        history.add("history test item");
 
         CloseableIterator<String> iterator = new CloseableIterator<String>() {
             String line;
@@ -102,10 +115,22 @@ public class CommandProcessor {
         }
     }
 
+    private static class MyParser implements Parser {
+
+        public MyParser() {
+        }
+
+        @Override
+        public ParsedLine parse(String string, int i, ParseContext pc) throws SyntaxError {
+            throw new UnsupportedOperationException("Not supported yet." + string);
+        }
+    }
+
     class StdInProcessor extends Thread {
 
         private Spliterator<String> splt;
         private final Iterator<String> iterator;
+        private int count;
 
         private StdInProcessor(Iterator<String> iterator) {
             splt = Spliterators.spliterator(iterator, Long.MAX_VALUE,
@@ -126,10 +151,23 @@ public class CommandProcessor {
                         } catch (IOException ex) {
                             Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
                         }
-                    }).forEach(CommandProcessor.this::processCommand);
+                    })
+                            .forEach(CommandProcessor.this::processCommand);
+                    this.count =0 ;
+                } catch (UserInterruptException x) {
+                    log.info("got break in cmd handler");
+                    if (count++ > 2) {
+                        log.info("okay kill me");
+                        System.exit(1);
+                    }
                 } catch (Exception x) {
                     log.info(x.getMessage() + " in cmd handler");
                     log.log(Level.WARNING, x.getMessage(), x);
+                } catch (Error x) {
+                    log.info(x.getMessage() + " in cmd handler");
+                    log.log(Level.WARNING, x.getMessage(), x);
+                    log.severe("see ya l8r");
+                    System.exit(1);
                 }
             }
 

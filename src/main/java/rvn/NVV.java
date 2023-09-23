@@ -1,8 +1,13 @@
 package rvn;
 
+import com.google.common.collect.HashBiMap;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 
 public class NVV implements Comparable<NVV> {
@@ -13,12 +18,16 @@ public class NVV implements Comparable<NVV> {
     public ComparableVersion cVersion;
     public Path path;
     public boolean isParent;
+    Map<String, String> properties = new HashMap<>();
+    NVV parent;
+    boolean resolved;
+    Set<NVV> deps = new HashSet<>();
 
     public NVV(String name, String vendor, String version) {
         this(name, vendor, version, null);
     }
 
-    public NVV(String name, String vendor, String version, Path path) {
+    private NVV(String name, String vendor, String version, Path path) {
         this.name = name;
         this.vendor = vendor;
         this.version = version;
@@ -26,11 +35,12 @@ public class NVV implements Comparable<NVV> {
         this.cVersion = new ComparableVersion(version);
     }
 
-    public NVV(String name, String vendor) {
+    private NVV(String name, String vendor) {
         this.name = name;
         this.vendor = vendor;
     }
 
+    //TESTING
     public NVV(String name) {
         this.name = name;
     }
@@ -50,14 +60,6 @@ public class NVV implements Comparable<NVV> {
         }
 
         return bob.toString();
-    }
-
-    @Override
-    public int hashCode() {
-        int hash = 3;
-        hash = 61 * hash + Objects.hashCode(this.name);
-        hash = 61 * hash + Objects.hashCode(this.vendor);
-        return hash;
     }
 
     public boolean equalsExact(Object obj) {
@@ -83,27 +85,6 @@ public class NVV implements Comparable<NVV> {
         return true;
     }
 
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj == null) {
-            return false;
-        }
-        if (getClass() != obj.getClass()) {
-            return false;
-        }
-        final NVV other = (NVV) obj;
-        if (!Objects.equals(this.name, other.name)) {
-            return false;
-        }
-        if (!Objects.equals(this.vendor, other.vendor)) {
-            return false;
-        }
-        return true;
-    }
-
     private String getLongName() {
         return vendor + name;
     }
@@ -124,6 +105,32 @@ public class NVV implements Comparable<NVV> {
     NVV with(Path path) {
         this.path = path;
         return this;
+    }
+
+    @Override
+    public int hashCode() {
+        int hash = 5;
+        hash = 79 * hash + Objects.hashCode(this.name);
+        hash = 79 * hash + Objects.hashCode(this.vendor);
+        return hash;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null) {
+            return false;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        final NVV other = (NVV) obj;
+        if (!Objects.equals(this.name, other.name)) {
+            return false;
+        }
+        return Objects.equals(this.vendor, other.vendor);
     }
 
 }

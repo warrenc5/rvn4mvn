@@ -141,6 +141,13 @@ public class ConfigFactory {
         return Globals.config;
     }
 
+    public void addDefaultLocation() {
+
+        if (Globals.locations.isEmpty()) {
+            Globals.locations.add(Paths.get(".").toAbsolutePath().normalize().toString());
+        }
+    }
+
     public void reloadConfiguration(Path child) {
         this.loadConfiguration(child);
     }
@@ -154,7 +161,7 @@ public class ConfigFactory {
         } else {
             log.info(String.format("%1$s exists", configPath));
         }
-        pathWatcher.watch(configPath.getParent());
+        pathWatcher.watch(configPath.toAbsolutePath().getParent());
         log.info(String.format("loading configuration " + ANSI_WHITE + "%1$s" + ANSI_RESET, configPath));
 
         Reader scriptReader = Files.newBufferedReader(configPath);
@@ -471,15 +478,23 @@ public class ConfigFactory {
         }
     }
 
+    public boolean isConfigFileSafe(Path path) {
+        try {
+            return isConfigFile(path);
+        } catch (Exception x) {
+            return false;
+        }
+    }
+
     public boolean isConfigFile(Path path) throws IOException {
         Config config = getConfig(path); //FIXME should return global config?
-        return (Files.exists(path) && config!=null && Files.isSameFile(path, config.configPath))
-               || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+        return (Files.exists(path) && config != null && Files.isSameFile(path, config.configPath))
+                || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private void createConfiguration(Path config) throws IOException {
         URL configURL = Thread.currentThread().getContextClassLoader().getResource("rvn.json");
-        try ( Reader reader = new InputStreamReader(configURL.openStream());  Writer writer = new FileWriter(config.toFile());) {
+        try (Reader reader = new InputStreamReader(configURL.openStream()); Writer writer = new FileWriter(config.toFile());) {
             while (reader.ready()) {
                 writer.write(reader.read());
             }
@@ -564,12 +579,28 @@ public class ConfigFactory {
 
     public String toggleCommand(String cmd) {
         if (cmd.startsWith("!")) {
-            log.info(String.format("toggle command "+ ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " on" + ANSI_RESET,cmd));
+            log.info(String.format("toggle command " + ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " on" + ANSI_RESET, cmd));
             return cmd.substring(1);
         } else {
-            log.info(String.format("toggle command "+ ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " off" + ANSI_RESET,cmd));
+            log.info(String.format("toggle command " + ANSI_BOLD + ANSI_WHITE + "%1$s " + ANSI_RED + " off" + ANSI_RESET, cmd));
             return "!" + cmd;
         }
+    }
+
+    public void writeHistory() {
+
+    }
+
+    public void readHistory() {
+
+    }
+
+    void scanForConfigs(Path d) {
+        Arrays.stream(d.toFile().listFiles())
+                .map(File::getAbsoluteFile)
+                .map(File::toPath)
+                .filter(this::isConfigFileSafe)
+                .forEach(Globals.configs::add);
     }
 
 }

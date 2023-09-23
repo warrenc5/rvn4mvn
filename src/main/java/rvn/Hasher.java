@@ -82,7 +82,7 @@ public class Hasher {
                 updated = oldHash != null && !oldHash.equals(newHash);
 
                 writeHashes();
-            } catch (java.nio.charset.MalformedInputException ex) {
+            } catch (java.io.UncheckedIOException | java.nio.charset.MalformedInputException ex) {
                 log.warning("hash " + path.toString() + " " + ex.getMessage());
             } catch (IOException ex) {
                 log.warning("hash " + path.toString() + " " + ex.getMessage());

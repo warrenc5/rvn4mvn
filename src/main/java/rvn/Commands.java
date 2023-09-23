@@ -11,8 +11,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -21,6 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_PURPLE;
@@ -37,6 +41,7 @@ import static rvn.Globals.lastFile;
 import static rvn.Globals.logs;
 import static rvn.Globals.paths;
 import static rvn.Globals.previousCmdIdx;
+import static rvn.Globals.projects;
 import static rvn.Globals.toBuild;
 import static rvn.Util.prettyDuration;
 import static rvn.Util.rangeToIndex;
@@ -326,6 +331,7 @@ public class Commands {
                                         System.lineSeparator(), ""))))
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
 
+                //FIXME: config.commands NPE
                 shortList = config.commands.keySet().stream()
                         .filter(i -> project.matchNVV(i, arg2)).collect(toList());
 
@@ -345,12 +351,42 @@ public class Commands {
             }
             return FALSE;
         }));
+
+        commandHandlers.add(new CommandHandler("%[groupId]:[artifactId]:[version]", "%:test: mygroup:",
+                "Shows missing deps for the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
+                (command) -> {
+
+                    if (!command.startsWith("%")) {
+                        return FALSE;
+                    }
+                    String nvv = command.substring(1);
+                    if (Project.isNVV(nvv)) {
+                        Set<NVV> keys = buildArtifact.keySet()
+                                .stream()
+                                .filter(n -> project.matchNVV(n, nvv)).collect(toSet());
+                        List sortedKeys = new ArrayList(keys);
+                        Collections.sort(sortedKeys);
+                        log.info("selected " + sortedKeys.toString().replaceAll(", ", "\n"));
+
+                        Set<NVV> missing = keys.stream().flatMap(n -> projects.get(n).stream())
+                                .map(n -> Project.getInstance().resolveGAV(n))
+                                //FIXME test if version match .filter(d -> (projects.containsKey(d) && !d.equalsExact(n)) || !projects.containsKey(n))
+                                .filter(n -> !projects.containsKey(n))
+                                .collect(toSet());
+
+                        log.info("\nmissing " + missing.toString());
+
+                        return TRUE;
+                    }
+                    return FALSE;
+                }));
         commandHandlers.add(new CommandHandler("[groupId]:[artifactId]:[version]", ":test: mygroup:",
                 "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
                 (command) -> {
                     if (Project.isNVV(command)) {
                         buildArtifact.keySet().stream().filter(n -> project.matchNVV(n, command)).forEach(n -> {
-                            Globals.lastNvv = eventWatcher.processChange(n);
+                            log.info("selected " + n.toString());
+                            Globals.lastNvv = eventWatcher.processChangeImmediatley(n);
                         });
                         return TRUE;
                     }
@@ -359,9 +395,9 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
-                    return paths.stream()
-                            .filter(p -> buildPaths.containsKey(p))
-                            .filter(p -> p != null && pathWatcher.match(p, command)).map(p -> {
+            return paths.stream()
+                    .filter(p -> (buildPaths.containsKey(p) && pathWatcher.match(p, command)))
+                    .map(p -> {
                         Hasher.getInstance().hashes.remove(p.toString());
                         try {
                             Globals.lastChangeFile = p;
@@ -370,7 +406,8 @@ public class Commands {
                             log.warning("path " + ex.getMessage());
                         }
                         return p;
-                    }).iterator().hasNext();
+
+                            }).iterator().hasNext();
                 }));
 
         commandHandlers.add(new CommandHandler("path", "/tmp/to/fail.out", "Dump the file to stdout.", (command) -> {
@@ -438,7 +475,10 @@ public class Commands {
         }));
 
         commandHandlers.add(new CommandHandler("q", "", "Stop all builds and exit.", (command) -> {
-            if (command.trim().equalsIgnoreCase("q")) {
+            if (command.trim().equalsIgnoreCase("q") || 
+            command.trim().equalsIgnoreCase("quit") || 
+            command.trim().equalsIgnoreCase("exit")) {
+             
                 log.info("blitzkreik");
 
                 buildIt.stopAllBuilds();

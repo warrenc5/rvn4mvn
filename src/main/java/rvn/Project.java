@@ -20,6 +20,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toList;
 import java.util.stream.Stream;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -204,44 +205,11 @@ public class Project {
         NVV nvv = nvvFrom(path);
         NVV parentNvv = nvvParent(nvv, xmlDocument);
 
-        this.resolveVersion(nvv);
-
         if (!matchNVV(nvv, path)) {
             log.finest("ignoring " + nvv.toString() + "  " + path.toString());
             return Optional.empty();
         }
         log.finest("selected " + nvv.toString() + "  " + path.toString());
-
-        if (path.endsWith("pom.xml")) {
-            Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
-
-            Path oldPath = buildArtifact.get(nvv);
-            if (oldPath != null && !Files.isSameFile(path, oldPath)) {
-                Long otherTime = Files.getLastModifiedTime(oldPath).to(TimeUnit.SECONDS);
-                if (workingTime > otherTime) {
-                    log.warning(
-                            String.format(
-                                    ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "newer than" + ANSI_PURPLE + " %2$s"
-                                    + ANSI_CYAN + " %3$s" + ANSI_RED + ", replacing" + ANSI_RESET,
-                                    path, oldPath, nvv.toString()));
-                } else {
-                    log.warning(
-                            String.format(
-                                    ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "older than" + ANSI_PURPLE + " %2$s"
-                                    + ANSI_CYAN + " %3$s" + ANSI_RESET + ", ignoring",
-                                    path, oldPath, nvv.toString()));
-                    return Optional.empty();
-                }
-            }
-
-            log.info("found build " + nvv.toString() + " " + path.toString());
-            buildArtifact.put(nvv, path);
-            buildPaths.put(path, nvv);
-        } else if (path.toString().endsWith(".pom")) {
-            log.finest(nvv.toString() + " ++++++++ " + path.toString());
-            repoArtifact.put(nvv, path);
-        } else {
-        }
 
         boolean updated = Hasher.getInstance().update(path);
         if (updated) {
@@ -269,6 +237,8 @@ public class Project {
             deps.add(parentNvv);
         }
 
+        nvv.deps = deps;
+
         NodeList modules = (NodeList) xPath.compile("//modules/module").evaluate(xmlDocument, XPathConstants.NODESET);
 
         if (modules.getLength() > 0) {
@@ -278,9 +248,42 @@ public class Project {
 
         Map<String, String> props = this.propertiesFrom(xmlDocument);
         properties.put(nvv, props);
+        nvv.properties = props;
 
         log.fine(String.format("tracking %1$s %2$s", nvv.toString(), path));
         projects.put(nvv, deps);
+
+        if (path.endsWith("pom.xml")) {
+            Long workingTime = Files.getLastModifiedTime(path).to(TimeUnit.SECONDS);
+
+            Path oldPath = buildArtifact.get(nvv);
+            if (oldPath != null && !Files.isSameFile(path, oldPath)) {
+                Long otherTime = Files.getLastModifiedTime(oldPath).to(TimeUnit.SECONDS);
+                if (workingTime > otherTime) {
+                    log.warning(
+                            String.format(
+                                    ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "newer than" + ANSI_PURPLE + " %2$s"
+                                    + ANSI_CYAN + " %3$s" + ANSI_RED + ", replacing" + ANSI_RESET,
+                                    path, oldPath, nvv.toString()));
+                } else {
+                    log.warning(
+                            String.format(
+                                    ANSI_PURPLE + "%1$s " + ANSI_YELLOW + "older than" + ANSI_PURPLE + " %2$s"
+                                    + ANSI_CYAN + " %3$s" + ANSI_RESET + ", ignoring",
+                                    path, oldPath, nvv.toString()));
+                    return Optional.empty();
+                }
+            }
+
+            log.fine("found build " + nvv.toString() + " " + path.toString());
+            buildArtifact.put(nvv, path);
+            buildPaths.put(path, nvv);
+        } else if (path.toString().endsWith(".pom")) {
+            log.finest(nvv.toString() + " ++++++++ " + path.toString());
+            repoArtifact.put(nvv, path);
+        } else {
+        }
+
         return Optional.of(nvv);
     }
 
@@ -308,6 +311,7 @@ public class Project {
             Node parent = (Node) xPath.compile("/project/parent").evaluate(xmlDocument, XPathConstants.NODE);
             if (parent != null) {
                 parentNvv = nvvFrom(parent);
+                nvv.parent = parentNvv;
                 parentNvv.isParent = true;
             }
 
@@ -394,63 +398,82 @@ public class Project {
                 xPath.compile("version").evaluate(context).trim());
     }
 
-    public void resolveVersions() {
-        Stream<NVV> nvvs = Stream.concat(
-                Stream.concat(
-                        Stream.concat(
-                                projects.keySet().stream(),
-                                Stream.concat(
-                                        buildIndex.stream(),
-                                        index.stream())
-                        ), toBuild.stream()),
-                projects.values().stream().flatMap(s -> s.stream()));
+    public void resolveGAV() {
+        Stream<NVV> nvvs = Stream.of(
+                projects.keySet().stream(),
+                buildIndex.stream(),
+                index.stream(),
+                toBuild.stream(),
+                buildArtifact.keySet().stream(),
+                projects.values().stream().flatMap(s -> s.stream())).flatMap(s -> s);
 
-        resolveVersion(nvvs);
+        Project.this.resolveGAV(nvvs);
     }
 
-    public void resolveVersion(Stream<NVV> nvvs) {
-        nvvs.forEach(nvv -> {
-            resolveVersion(nvv);
+    public void resolveGAV(Stream<NVV> nvvs) {
+        nvvs.collect(toList()).forEach(nvv -> {
+            NVV nvvR = resolveGAV(nvv);
+            log.fine("resolved " + nvv.toString() + " " + nvvR.toString() + " " + nvvR.parent + " " + nvv.path);
         });
     }
 
-    private void resolveVersion(NVV nvv) {
-        NVV parentNvv = Globals.parent.get(nvv);
+    public NVV resolveGAV(NVV nvv) {
+        NVV parentNvv = nvv.parent;
 
-        if (parentNvv == null) {
-            return;
+        if (parentNvv != null) {
+            this.resolveGAV(parentNvv);
         }
 
-        this.resolveVersion(parentNvv);
-
-        if (nvv.vendor.isBlank()) {
-            nvv.vendor = parentNvv.vendor;
+        if (nvv.name.contains("\\${")) {
+            nvv.name = interpolate(nvv, nvv.name);
         }
-        if (nvv.version.isBlank()) {
-            nvv.version = parentNvv.version;
-        } else if (nvv.version.equalsIgnoreCase("${pom.version}") || nvv.version.equalsIgnoreCase("${project.version}")) {
-            nvv.version = parentNvv.version;
-        } else if (nvv.version.startsWith("${")) {
+
+        if (nvv.vendor == null || nvv.vendor.isBlank()) {
+            if (parentNvv != null) {
+                nvv.vendor = parentNvv.vendor;
+            }
+        } else if (nvv.vendor.equalsIgnoreCase("${pom.groupId}")
+                || nvv.vendor.equalsIgnoreCase("${project.groupId}")
+                || nvv.vendor.equalsIgnoreCase("${project.parent.groupId}")) {
+            if (parentNvv != null) {
+                nvv.vendor = parentNvv.vendor;
+            }
+        } else if (nvv.vendor.contains("\\${")) {
+            nvv.vendor = interpolate(nvv, nvv.vendor);
+        }
+
+        if (nvv.version == null || nvv.version.isBlank()) {
+            if (parentNvv != null) {
+                nvv.version = parentNvv.version;
+            }
+        } else if (nvv.version.equalsIgnoreCase("${pom.version}")
+                || nvv.version.equalsIgnoreCase("${project.version}")
+                || nvv.version.equalsIgnoreCase("${project.parent.version}")) {
+            if (parentNvv != null) {
+                nvv.version = parentNvv.version;
+            }
+        } else if (nvv.version.contains("\\${")) {
             nvv.version = interpolate(nvv, nvv.version);
         }
 
         nvv.resolveVersion(nvv.version);
 
+        nvv.resolved = true;
+        return nvv;
     }
 
     private String interpolate(NVV nvv, String value) {
+        log.info("int " + nvv.toString() + " " + value);
         Pattern p = Pattern.compile("\\$\\{(.*)\\}");
-        Map<String, String> props = null;
-        props = propertiesFrom(nvv);
-        Matcher matcher = p.matcher(nvv.version);
+        Matcher matcher = p.matcher(value);
         if (matcher.matches()) {
             String name = matcher.group(1);
             String newValue = null;
-            if (props.containsKey(name)) {
-                newValue = props.get(name);
+            if (nvv.properties.containsKey(name)) {
+                newValue = nvv.properties.get(name);
                 return newValue;
             } else {
-                NVV parentNvv = parent.get(nvv);
+                NVV parentNvv = nvv.parent;
 
                 if (parentNvv != null) {
                     newValue = this.interpolate(parentNvv, value);
@@ -554,8 +577,7 @@ public class Project {
 
     Stream<NVV> projectDepends(NVV nvv) {
         return projects.entrySet().stream()
-                .filter(e
-                        -> e.getValue().contains(nvv)
+                .filter(e -> e.getValue().contains(nvv)
                 ).map(e -> e.getKey());
     }
 
@@ -568,13 +590,12 @@ public class Project {
         List<Map.Entry<Path, NVV>> base = buildPaths.entrySet().stream().filter(e -> isBasePath(e.getKey(), path))
                 .collect(Collectors.toList());
 
-        log.fine("base: " + base.toString());
-
         Optional<Map.Entry<Path, NVV>> nvv = base.stream().reduce((e1, e2) -> {
             return (e1 != null && e1.getKey().getNameCount() >= e2.getKey().getNameCount()) ? e1 : e2;
         });
 
         if (nvv.isPresent()) {
+            log.info("base: " + nvv.get().toString());
             return nvv.get().getValue();
         } else {
             return null;
@@ -591,14 +612,21 @@ public class Project {
     private boolean isBasePath(Path project, Path changed) {
         Path parent = project.getParent();
         boolean base = false;
+        try {
 
-        if (changed.endsWith(project)) {
-            base = true;
-        } else if (changed.startsWith(parent)) {
-            base = true;
+            if (changed.toRealPath().startsWith(parent.toRealPath())) {
+                base = true;
+            } else if (changed.toRealPath().endsWith(parent.toRealPath())) {
+                base = true;
+            }
+
+            if (base) {
+                log.finest(ANSI_PURPLE + "changed " + changed.toRealPath() + " " + ANSI_CYAN + parent.toRealPath() + " " + base + ANSI_RESET + " " + project.toRealPath());
+            }
+            return base;
+        } catch (Exception x) {
+            return false;
         }
-        log.fine(ANSI_PURPLE + "changed " + ANSI_CYAN + parent + " " + base + ANSI_RESET);
-        return base;
     }
 
     public static String expandNVVMatch(String s) {
@@ -644,16 +672,18 @@ public class Project {
     }
 
     boolean needsBuild(NVV nvv) {
-        Optional<Path> bPath = buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
-        Optional<Path> rPath = repoArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+        synchronized (buildArtifact) {
+            Optional<Path> bPath = buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
+            Optional<Path> rPath = repoArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();
 
-        if (bPath.isPresent() && rPath.isEmpty()) {
-            log.finest("missing " + nvv.toString() + " " + bPath + " " + rPath);
-            return true;
-        } else if (bPath.isPresent() && rPath.isPresent()) {
-            return !hasher.compareHashes(bPath.get(), rPath.get());
-        } else {
-            return false;
+            if (bPath.isPresent() && rPath.isEmpty()) {
+                log.finest("missing " + nvv.toString() + " " + bPath + " " + rPath);
+                return true;
+            } else if (bPath.isPresent() && rPath.isPresent()) {
+                return !hasher.compareHashes(bPath.get(), rPath.get());
+            } else {
+                return false;
+            }
         }
     }
 

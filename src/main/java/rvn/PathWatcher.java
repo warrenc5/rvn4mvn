@@ -1,5 +1,6 @@
 package rvn;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -28,6 +29,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
+import static java.util.stream.Collectors.toList;
 import java.util.stream.Stream;
 import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPathExpressionException;
@@ -57,7 +59,7 @@ public class PathWatcher extends Thread {
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
 
     int depth = 0;
-    int maxDepth = 16;
+    int maxDepth = 20;
     int lastDepth = 0;
 
     public static Set<WatchKey> keys;
@@ -118,17 +120,24 @@ public class PathWatcher extends Thread {
         LinkOption[] linkOptions = new LinkOption[option.size()];
 
         if (!config.followLinks) {
+            if (depth == 1) {
+                log.finest("not following links in " + dir);
+            }
             option.add(LinkOption.NOFOLLOW_LINKS);
         } else {
-            log.fine("following links in " + dir);
+            //if (depth == 1) {
+            // log.info("following links in " + dir);
+            //}
         }
 
         warn.set(false);
 
         watch(dir);
         try (Stream<Path> stream = Files.list(dir)) {
-            stream.filter(child -> Files.isDirectory(child) && matchDirectories(child)).map(child -> {
-                if (Files.isSymbolicLink(child) && !option.isEmpty()) {
+            //log.warning(dir + " " + stream.collect(toList()).toString());
+            //Stream<Path> stream2 = Files.list(dir);
+            stream.filter(child -> (Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child)).map(child -> {
+                if (Files.isSymbolicLink(child)) {// && !option.isEmpty()) {
                     log.warning("dir links " + child + "  in " + dir + " use followLinks: true to follow");
                     warn.set(true);
                 }
@@ -169,6 +178,10 @@ public class PathWatcher extends Thread {
             log.info(String.format("recurse failed %1$s %2$s", ex.getClass().getName(), ex.getMessage()));
         }
         return null;
+    }
+
+    public void watch(File dir) {
+        watch(Path.of(dir.toURI()));
     }
 
     public void watch(Path dir) {
@@ -217,7 +230,9 @@ public class PathWatcher extends Thread {
 
         Hasher.getInstance().writeHashes();
 
-        Project.getInstance().resolveVersions();
+        synchronized (this) {
+            Project.getInstance().resolveGAV();
+        }
 
         rehash();
 
@@ -244,9 +259,10 @@ public class PathWatcher extends Thread {
     }
 
     public void registerPath(final Path path) {
+        log.fine("register path " + path.toAbsolutePath().toString());
         try {
             log.finest(path.toString());
-            if (Files.isDirectory(path)) {
+            if (Files.isDirectory(path) || Files.isSymbolicLink(path) ) {
                 if (path.endsWith("repository")) {
                     BuildIt.getInstance().executor.submit(new Runnable() {
 
@@ -260,6 +276,7 @@ public class PathWatcher extends Thread {
                         }
                     });
                 } else
+                    log.finest("non repo path " + path);
                         try (Stream<Path> stream = Files.list(path)) {
                     stream.sorted().filter(child -> matchSafe(child)).forEach(PathWatcher.this::registerPath);
                 }
@@ -272,6 +289,7 @@ public class PathWatcher extends Thread {
                     lastBuild.put(oNvv.get(), lastest.get());
                 }
             } else if (path.endsWith("pom.xml")) {
+                log.fine("pom "  + path);
                 Optional<NVV> oNvv = Project.getInstance().processPom(path);
                 if (oNvv.isPresent()) {
                     Path parent = path.getParent();
@@ -337,13 +355,19 @@ public class PathWatcher extends Thread {
     }
 
     private boolean matchDirectories(Path path, Set<String> matchIncludes, Set<String> matchExcludes) {
-        return matchIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent() // FIXME: absolutely
-                && !matchExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        boolean matchInclude = matchIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely 
+        boolean matchExclude = matchExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        log.finest(String.format("%s %s %s", path, matchInclude, matchExclude));
+
+        return matchInclude && !matchExclude;
     }
 
     public boolean matchSafe(Path child) {
+
         try {
-            boolean match = (Files.isDirectory(child) && matchDirectories(child)) || matchFiles(child);
+            boolean match = ((Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child)) || 
+                   (Files.isRegularFile(child) && matchFiles(child));
+            log.fine(child.toString() + " " + match);
             return match;
         } catch (IOException ex) {
             log.log(Level.SEVERE, ex.getMessage(), ex);
@@ -368,6 +392,8 @@ public class PathWatcher extends Thread {
                 || path.getFileName().toString().equalsIgnoreCase(s);
         if (matches) {
             log.finest("matches path " + path.toString() + " " + s);
+        } else  {
+            log.finest("not matches path " + path.toString() + " " + s);
         }
         return matches;
     }
@@ -387,6 +413,7 @@ public class PathWatcher extends Thread {
         boolean matchIncludes = ConfigFactory.getInstance().isConfigFile(path)
                 || matchFileIncludes.isEmpty() || matchFileIncludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
         boolean matchExcludes = matchFileExcludes.stream().filter(s -> this.matchSafe(path, s)).findFirst().isPresent(); // FIXME: absolutely
+        log.finest(String.format("%s %s %s", path, matchIncludes, matchExcludes));
         return matchIncludes && !matchExcludes;
     }
 

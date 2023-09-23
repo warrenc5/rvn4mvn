@@ -110,8 +110,9 @@ public class EventWatcher extends Thread {
         Thread.dumpStack();
     }
 
-    public void processChangeImmediatley(NVV nvv) {
+    public NVV processChangeImmediatley(NVV nvv) {
         processChange(nvv, buildArtifact.get(nvv), true);
+        return nvv;
     }
 
     public NVV processChange(NVV nvv) {

@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -67,6 +68,7 @@ public class Globals {
 
     public static Instant thenFinished = null; //TODO use map for concurrent builds
     public static Instant thenStarted = null;
+    public static Map<LocalDateTime, String> history = null;
 
     static Map<NVV, String> lastCommand;
     static Set<Path> configs;
@@ -77,8 +79,9 @@ public class Globals {
     }
 
     public static void rehash() {
-        buildArtifact = new LinkedHashMap<>(buildArtifact);
+        buildArtifact = new ConcurrentSkipListMap<NVV, Path>(buildArtifact); // FIXME: was LinkedHashMap<>
         repoArtifact = new ConcurrentSkipListMap<NVV, Path>(repoArtifact);
+        projects = new ConcurrentHashMap<>(projects);
         parent = new LinkedHashMap<>(parent);
     }
 
@@ -88,7 +91,7 @@ public class Globals {
         agProjects = new HashSet<>();
         properties = new HashMap<>();
         locations = new ConcurrentSkipListSet<>();
-        projects = new ConcurrentHashMap<>();
+        projects = new HashMap<>();
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();
         //repoArtifact = new LinkedHashMap<>();
@@ -109,6 +112,7 @@ public class Globals {
         logs = new ArrayList<>();
         thenFinished = Instant.now();
         thenStarted = Instant.now();
+        history = new HashMap<>();
     }
 
 }
