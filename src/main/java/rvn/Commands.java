@@ -12,7 +12,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -395,17 +394,17 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("path", "/path/to/pom.xml",
                 "Builds the project(s) for the given coordinate(s). Supports regexp.", (command) -> {
-            return paths.stream()
-                    .filter(p -> (buildPaths.containsKey(p) && pathWatcher.match(p, command)))
-                    .map(p -> {
-                        Hasher.getInstance().hashes.remove(p.toString());
-                        try {
-                            Globals.lastChangeFile = p;
-                            Project.getInstance().processPath(p, true);
-                        } catch (Exception ex) {
-                            log.warning("path " + ex.getMessage());
-                        }
-                        return p;
+                    return paths.stream()
+                            .filter(p -> (buildPaths.containsKey(p) && pathWatcher.match(p, command)))
+                            .map(p -> {
+                                Hasher.getInstance().hashes.remove(p.toString());
+                                try {
+                                    Globals.lastChangeFile = p;
+                                    Project.getInstance().processPath(p, true);
+                                } catch (Exception ex) {
+                                    log.warning("path " + ex.getMessage());
+                                }
+                                return p;
 
                             }).iterator().hasNext();
                 }));
@@ -475,10 +474,10 @@ public class Commands {
         }));
 
         commandHandlers.add(new CommandHandler("q", "", "Stop all builds and exit.", (command) -> {
-            if (command.trim().equalsIgnoreCase("q") || 
-            command.trim().equalsIgnoreCase("quit") || 
-            command.trim().equalsIgnoreCase("exit")) {
-             
+            if (command.trim().equalsIgnoreCase("q")
+                    || command.trim().equalsIgnoreCase("quit")
+                    || command.trim().equalsIgnoreCase("exit")) {
+
                 log.info("blitzkreik");
 
                 buildIt.stopAllBuilds();
@@ -499,7 +498,7 @@ public class Commands {
                     buildIt.executor.submit(() -> {
                         future.cancel(true);
                         futureMap.remove(nvv);
-                        buildIt.qBuild(nvv, nvv);
+                        //buildIt.buildDe(nvv, nvv);
                         return null;
                     });
                 });
@@ -603,6 +602,7 @@ public class Commands {
             Integer i = null;
             Object o = null;
             StringBuilder cmd = new StringBuilder();
+            List<NVV> nvvs = new ArrayList<>();
             NVV nvv = null;
 
             OUTER:
@@ -614,12 +614,16 @@ public class Commands {
                     if (nvv == null) {
                         nvv = Globals.buildIndex.get(i);
                         if (nvv != null && !it.hasNext()) {
-                            buildIt.buildAllCommands(nvv);
+                            nvvs.add(nvv);
+                            nvv = null;
+                            //buildIt.buildAllCommands(nvv);
                         } else {
+                            nvvs.add(nvv);
+                            nvv = null;
                             continue;
                         }
                     } else {
-                        buildIt.buildACommand(nvv, i); //FIX ME just build the project not the command --there is another handler to do this.
+                        //buildIt.buildACommand(nvv, i); //FIX ME just build the project not the command --there is another handler to do this.
                     }
                     o = null;
                 } else if (o instanceof String) {
@@ -649,7 +653,7 @@ public class Commands {
             }
 
             if (i != null && cmd.length() == 0) {
-                buildIt.build(nvv);
+                buildIt.build(nvvs.toArray(new NVV[nvvs.size()]));
             }
 
             log.fine("swallowing command");

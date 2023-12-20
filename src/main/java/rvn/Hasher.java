@@ -62,7 +62,7 @@ public class Hasher {
     public boolean hashChange(Path path) {
         try {
             if (hashes.containsKey(path.toString()) && toSHA1(path).equals(hashes.get(path.toString()))) {
-                log.info("no hash change detected " + path);
+                log.fine("no hash change detected " + path);
                 return false;
             }
         } catch (Exception x) {
@@ -80,7 +80,6 @@ public class Hasher {
             try {
                 String oldHash = hashes.put(path.toString(), newHash = this.toSHA1(path));
                 updated = oldHash != null && !oldHash.equals(newHash);
-
                 writeHashes();
             } catch (java.io.UncheckedIOException | java.nio.charset.MalformedInputException ex) {
                 log.warning("hash " + path.toString() + " " + ex.getMessage());

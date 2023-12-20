@@ -166,8 +166,12 @@ public class EventWatcher extends Thread {
     private synchronized void processEvent(Path child, WatchEvent.Kind<?> kind) {
         try {
 
-            if (log.isLoggable(Level.INFO)) {
-                log.info(String.format("kind %1$s %2$s ", kind, child));
+            if (!PathWatcher.getInstance().matchFiles(child)) {
+                return;
+            }
+
+            if (log.isLoggable(Level.FINE)) {
+                log.fine(String.format("kind %1$s %2$s ", kind, child));
             }
             if (child == null) {
                 return;

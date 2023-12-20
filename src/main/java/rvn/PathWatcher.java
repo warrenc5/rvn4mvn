@@ -231,7 +231,7 @@ public class PathWatcher extends Thread {
         Hasher.getInstance().writeHashes();
 
         synchronized (this) {
-            Project.getInstance().resolveGAV();
+            Project.getInstance().resolve();
         }
 
         rehash();
@@ -262,7 +262,7 @@ public class PathWatcher extends Thread {
         log.fine("register path " + path.toAbsolutePath().toString());
         try {
             log.finest(path.toString());
-            if (Files.isDirectory(path) || Files.isSymbolicLink(path) ) {
+            if (Files.isDirectory(path) || Files.isSymbolicLink(path)) {
                 if (path.endsWith("repository")) {
                     BuildIt.getInstance().executor.submit(new Runnable() {
 
@@ -275,9 +275,10 @@ public class PathWatcher extends Thread {
                             }
                         }
                     });
-                } else
+                } else {
                     log.finest("non repo path " + path);
-                        try (Stream<Path> stream = Files.list(path)) {
+                }
+                try (Stream<Path> stream = Files.list(path)) {
                     stream.sorted().filter(child -> matchSafe(child)).forEach(PathWatcher.this::registerPath);
                 }
 
@@ -289,7 +290,7 @@ public class PathWatcher extends Thread {
                     lastBuild.put(oNvv.get(), lastest.get());
                 }
             } else if (path.endsWith("pom.xml")) {
-                log.fine("pom "  + path);
+                log.fine("pom " + path);
                 Optional<NVV> oNvv = Project.getInstance().processPom(path);
                 if (oNvv.isPresent()) {
                     Path parent = path.getParent();
@@ -365,8 +366,8 @@ public class PathWatcher extends Thread {
     public boolean matchSafe(Path child) {
 
         try {
-            boolean match = ((Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child)) || 
-                   (Files.isRegularFile(child) && matchFiles(child));
+            boolean match = ((Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child))
+                    || (Files.isRegularFile(child) && matchFiles(child));
             log.fine(child.toString() + " " + match);
             return match;
         } catch (IOException ex) {
@@ -392,7 +393,7 @@ public class PathWatcher extends Thread {
                 || path.getFileName().toString().equalsIgnoreCase(s);
         if (matches) {
             log.finest("matches path " + path.toString() + " " + s);
-        } else  {
+        } else {
             log.finest("not matches path " + path.toString() + " " + s);
         }
         return matches;

@@ -2,6 +2,7 @@ package rvn;
 
 import au.com.devnull.graalson.JsonObjectBindings;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -596,7 +597,18 @@ public class ConfigFactory {
     }
 
     void scanForConfigs(Path d) {
-        Arrays.stream(d.toFile().listFiles())
+        log.info("scanning path : "  + d);
+        if(d == null || d.toFile() == null || !d.toFile().isDirectory()) {
+            log.info("no path, use `realpath .`");
+            try {
+                d = Path.of(".").toRealPath();
+            } catch (IOException ex) {
+                throw new RuntimeException(new FileNotFoundException("no path"));
+            }
+        }
+        Arrays.stream(d
+                .toFile()
+                .listFiles())
                 .map(File::getAbsoluteFile)
                 .map(File::toPath)
                 .filter(this::isConfigFileSafe)

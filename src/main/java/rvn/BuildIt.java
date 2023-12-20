@@ -14,13 +14,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
@@ -37,11 +42,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
-import java.util.stream.Stream;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.xpath.XPathExpressionException;
 import org.codehaus.plexus.classworlds.launcher.Launcher;
-import org.xml.sax.SAXException;
+import org.jgrapht.alg.TransitiveClosure;
+import org.jgrapht.traverse.DepthFirstIterator;
 import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
@@ -74,6 +77,7 @@ public class BuildIt extends Thread {
     private Logger log = Logger.getLogger(this.getClass().getName());
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
     private static BuildIt instance;
+    private Deque<NVV> q = new ConcurrentLinkedDeque<>();
     public ScheduledThreadPoolExecutor executor;
 
     static {
@@ -86,7 +90,8 @@ public class BuildIt extends Thread {
 
     private final ImportFinder iFinder;
 
-    private Graph<NVV> q;
+    private Graph g;
+
     private boolean haveMvnD;
 
     public BuildIt() {
@@ -99,7 +104,6 @@ public class BuildIt extends Thread {
         });
 
         detectMavenDaemon();
-        q = new Graph<>();
     }
 
     void calculateToBuild() {
@@ -239,43 +243,8 @@ public class BuildIt extends Thread {
         } else {
             futureMap.keySet().forEach(nvv -> this.stopBuild(nvv));
         }
-
-        q.truncate();
-        //FIXME: executor.shutdownNow();
-        //executor = new ScheduledThreadPoolExecutor(1);
-    }
-
-    private void qBuild(NVV nvv) {
-        qBuild(nvv, nvv);
-    }
-
-    void qBuild(NVV nvv, NVV next) {
-        log.warning("qbuild " + nvv);
-
-        Path dir = buildArtifact.get(nvv);
-
-        if (dir == null) {
-            log.warning("no build path " + nvv);
-            return;
-        } else if (!Project.getInstance().isPom(dir)) {
-            return;
-        } else {
-            try {
-                Project.getInstance().processPom(dir);
-            } catch (SAXException | XPathExpressionException | IOException | ParserConfigurationException ex) {
-                log.warning("process " + ex.getMessage());
-            }
-        }
-
-        Edge edge = new Edge(nvv, next);
-
-        if (!q.contains(edge)) {
-            log.info("build " + edge.toString());
-            q.insert(edge);
-            log.info(nvv + "=>" + next + " q->" + q.toString().replace(',', '\n'));
-        } else {
-            log.info("already building " + edge.toString());
-        }
+        q.clear();
+        g.clear();
     }
 
     public synchronized void scheduleFuture(NVV nvv, boolean immediate) {
@@ -319,56 +288,64 @@ public class BuildIt extends Thread {
         });
     }
 
-    synchronized void build(NVV nvv) {
-        NVV pNvv = parent.get(nvv);
+    synchronized void build(NVV... nvvs) {
+        initGraph();
+        for (NVV nvv : nvvs) {
+            NVV pNvv = parent.get(nvv);
 
-        if (pNvv != null && Project.getInstance().needsBuild(pNvv)) {
-            build(pNvv);
+            if (pNvv != null && Project.getInstance().needsBuild(pNvv)) {
+                //build(pNvv);
+            }
+            buildDeps(nvv, true);
         }
-        qBuild(nvv);
+        q = g.reduceG2Q();
     }
 
-    public synchronized void buildDeps(NVV nvv) {
+    public synchronized void buildDeps(NVV nvv, boolean root) {
         log.info("requested to build " + nvv.toString());
-        try {
-            NVV pNvv = Globals.parent.get(nvv);
-
-            if (pNvv != null) { //AND parent is in buildArtifacts
-                buildDeps(pNvv);
-            }
-
-            //TODO build pre-requisites if available 
-            //FIXME create listeners for .poms
-            List<NVV> deps = projects.entrySet().stream()
-                    //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
-                    .flatMap(e -> Project.getInstance().projectDepends(nvv))
-                    .filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
-                    .filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
-                    .distinct().collect(toList());
-
-            log.info("requested to build " + nvv.toString());
-
-            if (deps.isEmpty()) {
-                qBuild(nvv, nvv);
-            } else {
-                deps.forEach(
-                        nvv2 -> {
-                            log.info("dep build " + nvv2.toString() + " " + nvv.toString());
-                            qBuild(nvv2, nvv);
-                        }
-                );
-            }
-
-            /**
-             * ).filter(e -> e.getValue().stream().filter( nvv2 -> pNvv == null
-             * || (pNvv != null && !nvv2.equals(pNvv)) ).filter( nvv2 ->
-             * nvv2.equals(nvv) ).findAny().isPresent() ).map(e -> e.getKey())
-             * .distinct() .forEach( nvv2 -> { qBuild(nvv, nvv2); } ); *
-             */
-        } catch (RuntimeException x) {
-            log.log(Level.WARNING, String.format("%1$s %2$s", nvv.toString(), x.getMessage()), x);
-
+        if (g == null) {
+            initGraph();
         }
+        synchronized (g) {
+            try {
+                if (!root && g.containsVertex(nvv)) {
+                    return;
+                }
+
+                NVV pNvv = Globals.parent.get(nvv);
+                if (pNvv != null) { //AND parent is in buildArtifacts
+                    //buildDeps(pNvv);
+                }
+
+                List<NVV> dependants = getDependants(nvv);
+
+                g.addVertex(nvv);
+                dependants.stream().filter(n -> Project.getInstance().matchNVV(n))
+                        .forEach(nvv2 -> {
+                            if (!nvv2.equals(nvv)) {
+                                //log.info("dep build " + nvv2.toString() + " " + nvv.toString());
+                                if (!g.containsVertex(nvv2)) {
+                                    g.addVertex(nvv2);
+                                }
+                                g.addEdge(nvv, nvv2);
+                                buildDeps(nvv2, false);
+                            }
+                        });
+
+            } catch (RuntimeException x) {
+                log.log(Level.WARNING, String.format("%1$s %2$s", nvv.toString(), x.getMessage()), x);
+
+            }
+        }
+    }
+
+    public synchronized List<NVV> getDependants(NVV nvv) {
+        return projects.entrySet().stream()
+                //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
+                .flatMap(e -> Project.getInstance().projectDepends(nvv))
+                .filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
+                //.filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
+                .distinct().collect(toList());
     }
 
     public void run() {
@@ -382,28 +359,26 @@ public class BuildIt extends Thread {
                 Logger.getLogger(BuildIt.class
                         .getName()).log(Level.SEVERE, null, ex);
             }
-            if (this.q.isEmpty()) {
-                continue;
-            } else if (q.size() >= 5) {
-                if (!Rvn.ee) {
-                    Rvn.ee = !Rvn.ee;
-                    Rvn.easterEgg();
+
+            synchronized (q) {
+                if (!q.isEmpty()) {
+                    try {
+                        NVV nvv = q.peek();
+                        doBuildTimeout(nvv);
+                    } finally {
+
+                        try {
+                            q.pop();
+                            log.info(q.toString());
+                        } catch (java.util.NoSuchElementException xNSE) {
+                            log.warning("q gone");
+                        }
+                    }
                 }
-            } else {
-            }
-            if (q.entrySet().isEmpty()) {
-                continue;
             }
 
-            log.info("have some builds");
-
-            try (final Stream<NVV> path = q.paths2()) {
-                path.forEach((nvv) -> {
-                    doBuildTimeout(nvv);
-                    q.remove(nvv);
-                });
-            }
         }
+
         log.info("builder exited - no more builds - restart");
         Thread.dumpStack();
     }
@@ -447,22 +422,19 @@ public class BuildIt extends Thread {
                 result.thenCombineAsync(future, (b, v) -> b && v);
             }
             result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
-                synchronized (q) {
-                    q.truncate();
-                }
+                g.clear();
                 return true;
             });
         }
         if (result != null) { //WTF? this is the chained result 
             result.whenComplete((r, t) -> { //FIXME user handleAsync from doBuild
                 if (r == true && t != null) {
-                    buildDeps(nvv);
+                    buildDeps(nvv, true);
                 }
             });
+
             result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
-                synchronized (q) {
-                    q.truncate();
-                }
+                g.clear();
                 return true;
             });
         }
@@ -846,4 +818,7 @@ public class BuildIt extends Thread {
 
     }
 
+    private void initGraph() {
+        g = new Graph();
+    }
 }

@@ -115,21 +115,22 @@ public class Rvn extends Thread {
 
     public Rvn(String[] args) throws Exception {
         this();
-        
+
         Arrays.stream(args).map(arg -> Path.of(arg)).forEach(p -> {
             try {
                 if (ConfigFactory.getInstance().isConfigFile(p)) {
                     Globals.configs.add(p);
                 } else {
-                    ConfigFactory.getInstance().scanForConfigs(p);
-                    log.info("adding " + p.toAbsolutePath().normalize().toString());
-                    Globals.locations.add(p.toAbsolutePath().normalize().toString());
+                    if (p != null) {
+                        ConfigFactory.getInstance().scanForConfigs(p);
+                        log.info("adding " + p.toAbsolutePath().normalize().toString());
+                        Globals.locations.add(p.toAbsolutePath().normalize().toString());
+                    }
                 }
             } catch (IOException ex) {
                 Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
             }
         });
-
 
     }
 
@@ -187,7 +188,7 @@ public class Rvn extends Thread {
 
     static void writeFileToStdout(File tf) throws FileNotFoundException, IOException {
         if (tf != null) {
-            try ( FileReader reader = new FileReader(tf)) {
+            try (FileReader reader = new FileReader(tf)) {
                 char c[] = new char[1024];
                 while (reader.ready()) {
                     int l = reader.read(c);

@@ -133,7 +133,7 @@ public class Project {
 
         if (checkHash
                 && !Hasher.getInstance().hashChange(path)) {
-            log.info("no hash change detected " + path);
+            log.fine("no hash change detected " + path);
             return;
         }
 
@@ -145,7 +145,7 @@ public class Project {
 
             log.info(String.format("nvv: %1$s %2$s", path, nvv));
             if (matchNVV(nvv, path)) {
-                buildIt.buildDeps(nvv);
+                buildIt.buildDeps(nvv, true);
             }
             return;
         } else if (configFileNames.contains(path.getFileName().toString())) {
@@ -214,10 +214,11 @@ public class Project {
         boolean updated = Hasher.getInstance().update(path);
         if (updated) {
             log.warning(String.format("%1$s already changed", nvv));
-            buildIt.buildDeps(nvv);
+            buildIt.buildDeps(nvv, true);
         }
 
-        NodeList nodeList = (NodeList) xPath.compile("//dependency").evaluate(xmlDocument, XPathConstants.NODESET);
+        //profiles? //not dependencyManagement
+        NodeList nodeList = (NodeList) xPath.compile("//dependencies[not(ancestor::dependencyManagement)]/dependency").evaluate(xmlDocument, XPathConstants.NODESET);
 
         Stream<Node> stream = toStream(nodeList);
 
@@ -234,7 +235,7 @@ public class Project {
 
         if (!Objects.isNull(parentNvv)) {
             parent.put(nvv, parentNvv);
-            deps.add(parentNvv);
+            //deps.add(parentNvv);
         }
 
         nvv.deps = deps;
@@ -398,7 +399,23 @@ public class Project {
                 xPath.compile("version").evaluate(context).trim());
     }
 
-    public void resolveGAV() {
+    void resolveParents() {
+    }
+
+    private void resolveParent(NVV nvv) {
+        if (nvv.parent != null) {
+            Optional<NVV> parent = projects.keySet().stream().filter(n2 -> n2.equals(nvv.parent)).findFirst();
+            if (parent.isPresent()) {
+                log.fine("resolved parent " + parent.get().toString());
+                resolveParent(parent.get());
+                nvv.parent = parent.get();
+            } else {
+                log.fine("can't resolved parent " + nvv.parent.toString());
+            }
+        }
+    }
+
+    public void resolve() {
         Stream<NVV> nvvs = Stream.of(
                 projects.keySet().stream(),
                 buildIndex.stream(),
@@ -407,14 +424,17 @@ public class Project {
                 buildArtifact.keySet().stream(),
                 projects.values().stream().flatMap(s -> s.stream())).flatMap(s -> s);
 
-        Project.this.resolveGAV(nvvs);
+        Project.this.resolve(nvvs);
     }
 
-    public void resolveGAV(Stream<NVV> nvvs) {
-        nvvs.collect(toList()).forEach(nvv -> {
+    public void resolve(Stream<NVV> nvvs) {
+        List<NVV> nvvsList = nvvs.collect(toList());
+        nvvsList.forEach(nvv -> {
             NVV nvvR = resolveGAV(nvv);
             log.fine("resolved " + nvv.toString() + " " + nvvR.toString() + " " + nvvR.parent + " " + nvv.path);
         });
+
+        nvvsList.forEach(nvv -> resolveParent(nvv));
     }
 
     public NVV resolveGAV(NVV nvv) {
@@ -543,10 +563,12 @@ public class Project {
 
     public boolean matchNVV(NVV nvv) {
         Config config = configFactory.getConfig(nvv);
-        return config.matchArtifactIncludes.isEmpty() || (config.matchArtifactIncludes.stream().filter(s -> this.matchSafe(nvv, s)).findFirst().isPresent());// FIXME:
-        // absolutely
-        //&& !matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent()); // FIXME:
-        // absolutely
+
+        boolean matchIncludes = config.matchArtifactIncludes.isEmpty() || config.matchArtifactIncludes.stream().filter(s -> this.matchSafe(nvv, s)).findFirst().isPresent();
+
+        boolean matchExcludes = config.matchArtifactExcludes.stream().filter(s -> this.match(nvv, s)).findFirst().isPresent();
+
+        return matchIncludes && !matchExcludes;
     }
 
     public boolean matchSafe(NVV nvv, String s) {
@@ -575,10 +597,28 @@ public class Project {
         return command.matches(".*:.*");
     }
 
+    //return a project if the given project is in the dependency list of that project
+    //or if that projects parent is the given project 
     Stream<NVV> projectDepends(NVV nvv) {
+
         return projects.entrySet().stream()
-                .filter(e -> e.getValue().contains(nvv)
-                ).map(e -> e.getKey());
+                .filter(e -> e.getValue().contains(nvv) || parentDepends(e.getKey(), nvv))
+                .map(e -> e.getKey());
+    }
+
+    private boolean parentDepends(NVV root, NVV nvv) {
+        NVV parent = root.parent;
+
+        if (root.parent != null && root.parent.equals(nvv)) {
+            return true;
+        } else if (parent != null) {
+            if (parent.deps.contains(nvv)) {
+                return true;
+            } else {
+                return parentDepends(parent, nvv);
+            }
+        }
+        return false;
     }
 
     boolean isPom(Path path) {
@@ -671,6 +711,7 @@ public class Project {
         Collections.sort(index, (NVV o1, NVV o2) -> o1.toString().compareTo(o2.toString()));
     }
 
+    //have build project but artifact not in repo
     boolean needsBuild(NVV nvv) {
         synchronized (buildArtifact) {
             Optional<Path> bPath = buildArtifact.entrySet().stream().filter(e -> e.getKey().equalsExact(nvv)).map(e -> e.getValue()).findAny();

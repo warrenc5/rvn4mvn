@@ -5,7 +5,6 @@ import java.util.Objects;
 
 public class Edge<T> {
 
-    
     public T nvv1;
     public T nvv2;
     public Path path;
@@ -22,6 +21,9 @@ public class Edge<T> {
         if (nvv1 == nvv2) {
             this.leaf = true;
         }
+    }
+
+    public Edge() {
     }
 
     @Override
