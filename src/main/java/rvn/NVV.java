@@ -1,6 +1,5 @@
 package rvn;
 
-import com.google.common.collect.HashBiMap;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -15,13 +14,15 @@ public class NVV implements Comparable<NVV> {
     public String name;
     public String vendor;
     public String version;
+    public String classifier;
     public ComparableVersion cVersion;
     public Path path;
     public boolean isParent;
-    Map<String, String> properties = new HashMap<>();
-    NVV parent;
+    public Map<String, String> properties = new HashMap<>();
+    public NVV parent;
+    public NVV project;
     boolean resolved;
-    Set<NVV> deps = new HashSet<>();
+    public Set<NVV> deps = new HashSet<>();
 
     public NVV(String name, String vendor, String version) {
         this(name, vendor, version, null);
@@ -57,6 +58,14 @@ public class NVV implements Comparable<NVV> {
 
         if (version != null) {
             bob.append(version);
+        }
+
+        if (classifier != null) {
+            if (version != null) {
+                bob.append(":");
+            }
+
+            bob.append(classifier);
         }
 
         return bob.toString();
@@ -133,4 +142,11 @@ public class NVV implements Comparable<NVV> {
         return Objects.equals(this.vendor, other.vendor);
     }
 
+    void setProperties(Map<String, String> props) {
+        this.properties = props;
+    }
+
+    String getRepositoryPath() {
+        return "^.*/"+vendor+"/"+name +"/.*$";
+    }
 }

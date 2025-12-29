@@ -16,11 +16,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
@@ -39,11 +36,10 @@ import static rvn.Globals.lastBuild;
 import static rvn.Globals.lastFile;
 import static rvn.Globals.logs;
 import static rvn.Globals.paths;
-import static rvn.Globals.previousCmdIdx;
 import static rvn.Globals.projects;
 import static rvn.Globals.toBuild;
 import static rvn.Util.prettyDuration;
-import static rvn.Util.rangeToIndex;
+import rvn.commands.NumberRangeCommand;
 
 /**
  *
@@ -268,7 +264,8 @@ public class Commands {
 
         commandHandlers.add(new CommandHandler("\\\\", "\\\\", "Build all yet to build list", (command) -> {
             if (command.trim().equals("\\\\")) {
-                Globals.toBuild.stream().forEach(nvv -> BuildIt.getInstance().build(nvv));
+                //Globals.toBuild.stream().forEach(nvv -> BuildIt.getInstance().build(nvv));
+                BuildIt.getInstance().build(Globals.toBuild.toArray(new NVV[Globals.toBuild.size()]));
                 return TRUE;
             }
             return FALSE;
@@ -331,8 +328,15 @@ public class Commands {
                         .collect(Collectors.joining("," + System.lineSeparator(), "", System.lineSeparator())));
 
                 //FIXME: config.commands NPE
-                shortList = config.commands.keySet().stream()
-                        .filter(i -> project.matchNVV(i, arg2)).collect(toList());
+                if (arg.isEmpty()) {
+                    return TRUE;
+                }
+
+                shortList.clear();
+                if (config != null && config.commands != null) {
+                    shortList = config.commands.keySet().stream()
+                            .filter(i -> project.matchNVV(i, arg2)).collect(toList());
+                }
 
                 l.set(0);
 
@@ -351,13 +355,14 @@ public class Commands {
             return FALSE;
         }));
 
-        commandHandlers.add(new CommandHandler("%[groupId]:[artifactId]:[version]", "%:test: mygroup:",
+        commandHandlers.add(new CommandHandler("%[groupId]:[artifactId]:[version]:[classifier]", "%:test: mygroup:",
                 "Shows missing deps for the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
                 (command) -> {
 
                     if (!command.startsWith("%")) {
                         return FALSE;
                     }
+
                     String nvv = command.substring(1);
                     if (Project.isNVV(nvv)) {
                         Set<NVV> keys = buildArtifact.keySet()
@@ -379,14 +384,45 @@ public class Commands {
                     }
                     return FALSE;
                 }));
-        commandHandlers.add(new CommandHandler("[groupId]:[artifactId]:[version]", ":test: mygroup:",
+        commandHandlers.add(new CommandHandler("~[groupId]:[artifactId]:[version]:[classifier]", ":test: mygroup:",
+                "search for project(s) with the dependencies for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
+                (command) -> {
+                    if (command.startsWith("~")) {
+                        project.updateIndex();
+                        String dep = command.substring(1);
+
+                        List<NVV> selected = buildArtifact.entrySet().stream()
+                                .map(e -> e.getKey())
+                                .filter(nvv->Project.getInstance().projectDepends(nvv,dep))
+                                .collect(Collectors.toList());
+
+                        log.info(selected.stream()
+                                .sorted((nvv1, nvv2) -> Integer.compare(buildIndex.indexOf(nvv1), buildIndex.indexOf(nvv2)))
+                                .map(i -> String.format(((toBuild.indexOf(i)) >= 0 ? (ANSI_RED + "*") : " ")
+                                + ANSI_GREEN + "%1$d " + ANSI_CYAN + "%2$s " + ANSI_PURPLE + "%3$s" + ANSI_RESET,
+                                buildIndex.indexOf(i), i, buildArtifact.get(i)))
+                                .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
+                        this.pathWatcher.watchSummary();
+                        return TRUE;
+                    }
+                    return FALSE;
+                }));
+
+        commandHandlers.add(new CommandHandler("[groupId]:[artifactId]:[version]:[classifier]", ":test: mygroup:",
                 "Builds the project(s) for the given coordinate(s). Supports regexp. e.g. .*:test:.* or :test: ",
                 (command) -> {
                     if (Project.isNVV(command)) {
-                        buildArtifact.keySet().stream().filter(n -> project.matchNVV(n, command)).forEach(n -> {
-                            log.info("selected " + n.toString());
-                            Globals.lastNvv = eventWatcher.processChangeImmediatley(n);
-                        });
+                        try {
+                            buildIt.lock.acquire();
+                            buildArtifact.keySet().stream().filter(n -> project.matchNVV(n, command)).forEach(n -> {
+                                log.info("selected " + n.toString());
+                                Globals.lastNvv = eventWatcher.processChangeImmediatley(n);
+                            });
+                            buildIt.lock.release();
+
+                        } catch (InterruptedException ex) {
+                            System.getLogger(Commands.class.getName()).log(System.Logger.Level.ERROR, (String) null, ex);
+                        }
                         return TRUE;
                     }
                     return FALSE;
@@ -506,7 +542,26 @@ public class Commands {
             }
             return FALSE;
         }));
+        commandHandlers.add(new CommandHandler("//", "//",
+                "List unique most specific groups", (command) -> {
+                    if (command.equals("//")) {
+                        project.updateIndex();
 
+                        Set<String> selected = buildArtifact.keySet().stream()
+                                .map(nvv -> nvv.vendor)
+                                .filter(vendor -> !buildArtifact.keySet().stream().anyMatch(nvv2
+                                -> !nvv2.vendor.equals(vendor) && nvv2.vendor.startsWith(vendor)
+                        ))
+                                .collect(Collectors.toSet());
+
+                        log.info(selected.stream()
+                                .sorted((s1, s2) -> s1.compareTo(s2))
+                                .collect(Collectors.joining("," + System.lineSeparator(), "", "")));
+                        this.pathWatcher.watchSummary();
+                        return TRUE;
+                    }
+                    return FALSE;
+                }));
         commandHandlers.add(new CommandHandler("/", "/[:test:|#]",
                 "List known project(s) matching coordinate or path expression.", (command) -> {
                     if (command.startsWith("/") && !command.equals("//")) {
@@ -539,56 +594,7 @@ public class Commands {
                     }
                     return FALSE;
                 }));
-
-        commandHandlers.add(new CommandHandler("[:num:]+[!`]?[^ `:num:,\\-]+", "100,3-5", "Builds the given project with the commands. To rebuild last use `,  To list commands omit the second argument.", (command) -> {
-            Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
-
-            Matcher matcher = re.matcher(command);
-            if (matcher.matches()) {
-                if (matcher.group(1).isBlank()) {
-                    return Boolean.FALSE;
-                }
-                Integer index = Integer.parseInt(matcher.group(1));
-                if (Globals.buildIndex.size() <= index) {
-                    log.info("not enough commands" + index);
-                    return TRUE;
-                }
-                NVV nvv = buildIndex.get(index);
-                Integer cmdIndex = null;
-                List<String> commands = buildIt.locateCommand(nvv, null);
-
-                if (matcher.groupCount() == 3 && !matcher.group(3).isBlank()) {
-
-                    String cmd = null;
-
-                    if ("`".equals(matcher.group(3))) {
-                        cmd = previousCmdIdx.get(index);
-                    } else {
-                        cmd = matcher.group(3);
-                        previousCmdIdx.put(index, cmd);
-                    }
-
-                    List<Integer> rangeIdx = rangeToIndex(cmd);
-                    for (Integer cmdIdx : rangeIdx) {
-                        cmd = commands.get(cmdIdx);
-                        log.info(cmd);
-                        if ("!".equals(matcher.group(2))) {
-                            configFactory.toggleCommand(nvv, cmd);
-                        } else {
-                            buildIt.buildACommand(nvv, cmd);
-                        }
-                    }
-                } else {
-
-                    AtomicInteger i = new AtomicInteger();
-                    commands.stream()
-                            .forEach(s -> this.log.info(i.getAndIncrement() + " " + s));
-                }
-
-                return TRUE;
-            }
-            return FALSE;
-        }));
+        commandHandlers.add(new NumberRangeCommand());
         commandHandlers.add(new CommandHandler("[:num: ]+", "100 101 102", "Builds the project(s) for the given project number in the given order.", (command) -> {
 
             Iterator<? extends Object> it = Arrays.stream(command.split(" ")).filter(s -> s.trim().length() > 0).map(s -> s.trim()).map(s -> {

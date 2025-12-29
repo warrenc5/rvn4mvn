@@ -23,7 +23,7 @@ public class CommandHandler implements Function<String, Boolean> {
     }
 
     @Override
-    public Boolean apply(String t) {
+    public final Boolean apply(String t) {
         boolean applied = this.fun.apply(t);
         if (applied) {
             log.info("handled by " + verb + " " + description);

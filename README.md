@@ -93,3 +93,10 @@ config = {
 ```
 
 echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+
+TODO: 
+- implement history
+- only watch active deps in repo
+- check hash before acutally building in buildit
+- reload NVV path after building incase pom change
+- remove config if .rvn config deleted

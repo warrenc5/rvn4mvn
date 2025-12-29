@@ -206,6 +206,7 @@ public class EventWatcher extends Thread {
                 if (nvv != null) {
                     Globals.buildArtifact.remove(nvv);
                     Globals.buildPaths.remove(child);
+                    log.info("deleted " + nvv + " from build");
                 }
 
             } else if (kind == ENTRY_CREATE) {

@@ -16,11 +16,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -30,10 +28,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -43,8 +41,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
 import org.codehaus.plexus.classworlds.launcher.Launcher;
-import org.jgrapht.alg.TransitiveClosure;
-import org.jgrapht.traverse.DepthFirstIterator;
 import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_CYAN;
 import static rvn.Ansi.ANSI_GREEN;
@@ -63,7 +59,6 @@ import static rvn.Globals.futureMap;
 import static rvn.Globals.lastChangeFile;
 import static rvn.Globals.lastCommand;
 import static rvn.Globals.logs;
-import static rvn.Globals.parent;
 import static rvn.Globals.processMap;
 import static rvn.Globals.projects;
 import static rvn.Globals.toBuild;
@@ -76,20 +71,19 @@ public class BuildIt extends Thread {
 
     private Logger log = Logger.getLogger(this.getClass().getName());
     private static Logger slog = Logger.getLogger(Rvn.class.getName());
-    private static BuildIt instance;
+    public static BuildIt instance;
     private Deque<NVV> q = new ConcurrentLinkedDeque<>();
     public ScheduledThreadPoolExecutor executor;
 
-    static {
-        instance = new BuildIt();
-    }
-
     public static BuildIt getInstance() {
+        if (instance == null)
+            return instance = new BuildIt();
         return instance;
     }
 
     private final ImportFinder iFinder;
 
+    public Semaphore lock = new Semaphore(1);
     private Graph g;
 
     private boolean haveMvnD;
@@ -131,14 +125,14 @@ public class BuildIt extends Thread {
         });
     }
 
-    void buildACommand(Integer i, String command) {
+    public void buildACommand(Integer i, String command) {
 
         if (buildIndex.size() > i) {
             this.buildACommand(buildIndex.get(i), command);
         }
     }
 
-    void buildACommand(NVV nvv, String command) {
+    public void buildACommand(NVV nvv, String command) {
         lastChangeFile = null;
 
         if (command.equals("-")) {
@@ -185,7 +179,7 @@ public class BuildIt extends Thread {
 
     private final static Pattern testRe = Pattern.compile("^.*src.test.java.(.*Test).java$");
 
-    List<String> locateCommand(NVV nvv, Path path) {
+    public List<String> locateCommand(NVV nvv, Path path) {
         log.info("locating commands " + nvv.toString());
         List<String> commandList = new ArrayList<>();
         if (lastChangeFile != null && iFinder.isJava(lastChangeFile)) {
@@ -220,7 +214,7 @@ public class BuildIt extends Thread {
                 .filter(e -> commandMatch(e.getKey(), nvv, path))
                 .flatMap(e -> e.getValue().stream())
                 .collect(Collectors.toList());
-        log.warning("commands " + commandList);
+        log.info("commands for " + nvv.toString() + " " + commandList);
 
         if (commandList.isEmpty()) {
             if (Globals.config.commands.containsKey("::")) {
@@ -279,7 +273,7 @@ public class BuildIt extends Thread {
                 } catch (Exception e) {
                     log.severe("error " + e);
                 } finally {
-                    futureMap.remove(nvv);
+                    //futureMap.remove(nvv);
                 }
                 return null;
             }, batchWait.toMillis(), TimeUnit.MILLISECONDS);
@@ -289,20 +283,16 @@ public class BuildIt extends Thread {
     }
 
     synchronized void build(NVV... nvvs) {
-        initGraph();
         for (NVV nvv : nvvs) {
-            NVV pNvv = parent.get(nvv);
-
-            if (pNvv != null && Project.getInstance().needsBuild(pNvv)) {
-                //build(pNvv);
-            }
             buildDeps(nvv, true);
         }
-        q = g.reduceG2Q();
+        synchronized (q) {
+            q = g.reduceG2Q();
+        }
     }
 
     public synchronized void buildDeps(NVV nvv, boolean root) {
-        log.info("requested to build " + nvv.toString());
+        log.fine("requested to build " + nvv.toString());
         if (g == null) {
             initGraph();
         }
@@ -310,28 +300,39 @@ public class BuildIt extends Thread {
             try {
                 if (!root && g.containsVertex(nvv)) {
                     return;
+                } else {
+                    g.addVertex(nvv);
                 }
 
-                NVV pNvv = Globals.parent.get(nvv);
-                if (pNvv != null) { //AND parent is in buildArtifacts
-                    //buildDeps(pNvv);
+                if (nvv.parent != null) {
+                    Optional<NVV> pNvv = Project.getInstance().getProject(nvv.parent);
+                    if (pNvv.isPresent() && !g.containsVertex(pNvv)) { //&& Project.getInstance().needsBuild(pNvv.get())) {
+                        if (!g.containsVertex(pNvv)) {
+                            log.fine("adding parent " + pNvv.get() + " for " + nvv);
+                            buildDeps(pNvv.get(), false);
+                        }
+                        g.insert(nvv, pNvv.get());
+                    };
                 }
 
-                List<NVV> dependants = getDependants(nvv);
+                List<NVV> dependencies = getBuildableDependencies(nvv);
 
-                g.addVertex(nvv);
-                dependants.stream().filter(n -> Project.getInstance().matchNVV(n))
+                dependencies.stream()
+                        //.filter(n1 -> Project.getInstance().needsBuild(n1))
+                        //.filter(n -> Project.getInstance().matchNVV(n))
                         .forEach(nvv2 -> {
+                            //if(!nvv2.resolved){ 
+                            //}
                             if (!nvv2.equals(nvv)) {
-                                //log.info("dep build " + nvv2.toString() + " " + nvv.toString());
                                 if (!g.containsVertex(nvv2)) {
-                                    g.addVertex(nvv2);
+                                    log.fine("dep build " + nvv2.toString() + " by " + nvv.toString());
+                                    buildDeps(nvv2, false);
                                 }
-                                g.addEdge(nvv, nvv2);
-                                buildDeps(nvv2, false);
+                                g.insert(nvv, nvv2);
                             }
                         });
 
+                log.fine("deps " + nvv.deps + " for " + nvv);
             } catch (RuntimeException x) {
                 log.log(Level.WARNING, String.format("%1$s %2$s", nvv.toString(), x.getMessage()), x);
 
@@ -339,52 +340,77 @@ public class BuildIt extends Thread {
         }
     }
 
-    public synchronized List<NVV> getDependants(NVV nvv) {
-        return projects.entrySet().stream()
-                //k.filter(e -> pNvv == null || (pNvv != null && !e.getKey().equals(pNvv)))
-                .flatMap(e -> Project.getInstance().projectDepends(nvv))
-                .filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
+    public synchronized List<NVV> getBuildableDependencies(NVV nvv) {
+        List<NVV> collect = nvv.deps
+                .stream()
+                .map(nvv2 -> Project.getInstance().resolveGAV(nvv2))
+                .flatMap(nvv3 -> Globals.buildIndex.stream().filter(n -> n.equals(nvv3)))
                 //.filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
-                .distinct().collect(toList());
+                .collect(toList());
+        return collect;
+    }
+
+    public synchronized List<NVV> getBuildableDependants(NVV nvv) {
+        List<NVV> collect = projects.entrySet().stream()
+                .flatMap(e -> Project.getInstance().projectDepends(nvv))
+                .collect(toList());
+
+        List<NVV> collect1 = collect.stream().filter(nvv3 -> Globals.buildArtifact.containsKey(nvv3))
+                //.filter(nvv4 -> Project.getInstance().needsBuild(nvv4))
+                .collect(toList());
+        return collect1;
+
     }
 
     public void run() {
         log.info("waiting for builds");
         while (this.isAlive()) {
             Thread.currentThread().yield();
+            if (this.lock.getQueueLength() == 0) {
+                try {
+                    Thread.currentThread().sleep(2000l);
+                } catch (InterruptedException ex) {
+                }
+            }
             try {
-                Thread.currentThread().sleep(200l);
-
+                this.lock.acquire();
             } catch (InterruptedException ex) {
-                Logger.getLogger(BuildIt.class
-                        .getName()).log(Level.SEVERE, null, ex);
+                continue;
             }
 
             synchronized (q) {
                 if (!q.isEmpty()) {
+                    NVV nvv = null;
                     try {
-                        NVV nvv = q.peek();
+                        nvv = q.peek();
+                        log.info("building q " + nvv.toString());
+                        //Thread.dumpStack();
                         doBuildTimeout(nvv);
+                    } catch (Throwable t) {
+                        log.log(Level.SEVERE, t.getMessage(), t);
                     } finally {
 
-                        try {
-                            q.pop();
-                            log.info(q.toString());
-                        } catch (java.util.NoSuchElementException xNSE) {
-                            log.warning("q gone");
+                        if (nvv != null) {
+                            try {
+                                q.pop();
+                                g.removeVertex(nvv);
+                                log.info("new result " + q.toString());
+                            } catch (java.util.NoSuchElementException xNSE) {
+                                log.warning("q gone");
+                            }
                         }
                     }
                 }
             }
 
+            this.lock.release();
         }
 
         log.info("builder exited - no more builds - restart");
         Thread.dumpStack();
     }
-    private Lock lock = new ReentrantLock();
 
-    public synchronized CompletableFuture<Boolean> doBuild(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
+    public CompletableFuture<Boolean> doBuild(NVV nvv, BiFunction<NVV, Path, List<String>> commandLocator) {
         CompletableFuture<Boolean> result = null;
         Path dir = buildArtifact.get(nvv);
         if (dir == null) {
@@ -422,6 +448,7 @@ public class BuildIt extends Thread {
                 result.thenCombineAsync(future, (b, v) -> b && v);
             }
             result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
+                log.warning("clearing graph because " + x.getMessage());
                 g.clear();
                 return true;
             });
@@ -429,11 +456,12 @@ public class BuildIt extends Thread {
         if (result != null) { //WTF? this is the chained result 
             result.whenComplete((r, t) -> { //FIXME user handleAsync from doBuild
                 if (r == true && t != null) {
-                    buildDeps(nvv, true);
+                    //buildDeps(nvv, true);
                 }
             });
 
             result.exceptionally((x) -> { //FIXME user handleAsync from doBuild
+                log.warning("clearing graph because 2 " + x.getMessage());
                 g.clear();
                 return true;
             });
@@ -639,7 +667,7 @@ public class BuildIt extends Thread {
                 throw new RuntimeException("no result, add some buildCommands to .rvn.json config file");
             }
             future.get(Globals.config.timeoutMap.getOrDefault(nvv, Globals.config.timeout).toMillis(), TimeUnit.MILLISECONDS); // {
-            log.finest("builder next");
+            log.finest("builder next " + nvv.toString());
             Thread.yield();
         } catch (CancellationException x) {
             log.warning(ANSI_GREEN + " " + buildIndex.indexOf(nvv) + " " + ANSI_RED + "Cancelled" + ANSI_RESET + " " + nvv.toString());

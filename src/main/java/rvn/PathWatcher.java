@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
@@ -237,8 +238,14 @@ public class PathWatcher extends Thread {
         rehash();
 
         BuildIt.getInstance().calculateToBuild();
+        List<Pattern> collect = Globals.buildIndex.stream()
+                .map(nvv -> nvv.getRepositoryPath())
+                .distinct()
+                .map(p -> Pattern.compile(p))
+                .collect(toList());
 
-        //this.iFinder = new ImportFinder(this.paths);
+        Globals.ps.updateBlockedUrl(collect);
+
         watchSummary();
     }
 
@@ -271,7 +278,7 @@ public class PathWatcher extends Thread {
                                 stream.sorted().filter(child -> matchSafe(child)).forEach(PathWatcher.this::registerPath);
                             } catch (IOException ex) {
                                 log.info(
-                                        String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
+                                        String.format("register failed2 %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
                             }
                         }
                     });
@@ -306,8 +313,7 @@ public class PathWatcher extends Thread {
                 paths.add(path);
             }
         } catch (IOException | SAXException | XPathExpressionException | ParserConfigurationException ex) {
-            log.info(
-                    String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
+            log.info(String.format("register failed3 %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
         }
     }
 
@@ -340,16 +346,24 @@ public class PathWatcher extends Thread {
         return match;
     }
 
-    private boolean matchDirectories(Path path) {
+    boolean matchDirectories(Path path) {
         Config global = ConfigFactory.getInstance().getGlobalConfig();
         Config config = ConfigFactory.getInstance().getConfig(path);
 
         Set<String> matchIncludes = new HashSet<>();
         Set<String> matchExcludes = new HashSet<>();
-        matchIncludes.addAll(global.matchDirIncludes);
-        matchIncludes.addAll(config.matchDirIncludes);
-        matchExcludes.addAll(global.matchDirExcludes);
-        matchExcludes.addAll(config.matchDirExcludes);
+        if (global.matchDirIncludes != null) {
+            matchIncludes.addAll(global.matchDirIncludes);
+            matchIncludes.addAll(config.matchDirIncludes);
+        } else {
+            log.warning("dir includes is null, config error");
+        }
+        if (global.matchDirIncludes != null) {
+            matchExcludes.addAll(global.matchDirExcludes);
+            matchExcludes.addAll(config.matchDirExcludes);
+        } else {
+            log.warning("dir includes is null, config error");
+        }
 
         boolean match = this.matchDirectories(path, matchIncludes, matchExcludes);
         return match;
@@ -364,16 +378,10 @@ public class PathWatcher extends Thread {
     }
 
     public boolean matchSafe(Path child) {
-
-        try {
-            boolean match = ((Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child))
-                    || (Files.isRegularFile(child) && matchFiles(child));
-            log.fine(child.toString() + " " + match);
-            return match;
-        } catch (IOException ex) {
-            log.log(Level.SEVERE, ex.getMessage(), ex);
-            return false;
-        }
+        boolean match = ((Files.isDirectory(child) || Files.isSymbolicLink(child)) && matchDirectories(child))
+                || (Files.isRegularFile(child) && matchFiles(child));
+        log.fine(child.toString() + " " + match);
+        return match;
     }
 
     private boolean matchSafe(Path path, String s) {
@@ -399,7 +407,7 @@ public class PathWatcher extends Thread {
         return matches;
     }
 
-    boolean matchFiles(Path path) throws IOException {
+    boolean matchFiles(Path path) {
 
         Config global = ConfigFactory.getInstance().getGlobalConfig();
         Config config = ConfigFactory.getInstance().getConfig(path);

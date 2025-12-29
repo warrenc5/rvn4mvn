@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import rvn.Globals;
 import rvn.NVV;
 import rvn.Rvn;
@@ -70,6 +70,24 @@ public class SimpleTests {
         boolean selected = rvn.getProject().matchNVV(project, match);
         assertTrue(selected);
 
+    }
+
+    @Test
+    public void testMatchNVVClassifier() throws Exception {
+        Rvn rvn = new Rvn();
+        String project = "group:art:ver:class";
+        String match = ":::class";
+        boolean selected = rvn.getProject().matchNVV(project, match);
+        assertTrue(selected);
+
+        project = "group:art:ver:jar";
+        selected = rvn.getProject().matchNVV(project, match);
+        assertFalse(selected);
+
+        project = "group:art:2.0.0:jar";
+        match = "::2.*:jar";
+        selected = rvn.getProject().matchNVV(project, match);
+        assertTrue(selected);
     }
 
     @Test

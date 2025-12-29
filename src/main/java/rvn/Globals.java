@@ -28,6 +28,7 @@ import java.util.concurrent.Future;
 public class Globals {
 
     public static Set<String> locations;
+    public static Set<String> repositories;
     public static List<Path> paths;
     public static List<NVV> buildIndex;
     public static List<NVV> index;
@@ -73,6 +74,7 @@ public class Globals {
     static Map<NVV, String> lastCommand;
     static Set<Path> configs;
     public static final String INVERSE = "!";
+    static ProxyServer ps;
 
     static {
         init();
@@ -91,6 +93,7 @@ public class Globals {
         agProjects = new HashSet<>();
         properties = new HashMap<>();
         locations = new ConcurrentSkipListSet<>();
+        repositories = new ConcurrentSkipListSet<>();
         projects = new HashMap<>();
         parent = new HashMap<>();
         buildArtifact = new LinkedHashMap<>();

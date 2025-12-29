@@ -76,7 +76,7 @@ public class Project {
     private final PathWatcher pathWatcher;
     private final ConfigFactory configFactory;
     private EventWatcher eventWatcher;
-    private List<String> pomFileNames;
+    private static List<String> pomFileNames;
     NVV lastNvv;
     private Path lastChangeFile;
     private final BuildIt buildIt;
@@ -249,7 +249,7 @@ public class Project {
 
         Map<String, String> props = this.propertiesFrom(xmlDocument);
         properties.put(nvv, props);
-        nvv.properties = props;
+        nvv.setProperties(props);
 
         log.fine(String.format("tracking %1$s %2$s", nvv.toString(), path));
         projects.put(nvv, deps);
@@ -297,6 +297,7 @@ public class Project {
 
         try {
             NVV nvv = nvvFrom(n);
+            nvv.project = proj;
             //log.info(String.format(proj.toString() + " depends on %1$s", nvv.toString()));
             //log.info(n.getParentNode().getParentNode().getNodeName());
             return nvv;
@@ -314,6 +315,13 @@ public class Project {
                 parentNvv = nvvFrom(parent);
                 nvv.parent = parentNvv;
                 parentNvv.isParent = true;
+                if (nvv.vendor.isEmpty() && !parentNvv.vendor.isEmpty()) {
+                    nvv.vendor = parentNvv.vendor;
+                }
+                if (nvv.version.isEmpty() && !parentNvv.version.isEmpty()) {
+                    nvv.version = parentNvv.version;
+                }
+
             }
 
         } catch (Exception e) {
@@ -395,8 +403,15 @@ public class Project {
     XPath xPath = XPathFactory.newInstance().newXPath();
 
     private NVV nvvFrom(Node context) throws XPathExpressionException {
-        return new NVV(xPath.compile("artifactId").evaluate(context).trim(), xPath.compile("groupId").evaluate(context).trim(),
-                xPath.compile("version").evaluate(context).trim());
+        NVV nvv = new NVV(xPath.compile("artifactId").evaluate(context).trim(), xPath.compile("groupId").evaluate(context).trim(), xPath.compile("version").evaluate(context).trim());
+
+        if ("pom".equals(xPath.compile("packaging").evaluate(context).trim())) {
+            nvv.isParent = true;
+        }
+
+        nvv.classifier = xPath.compile("packaging|classifer").evaluate(context).trim();
+        nvv.classifier = nvv.classifier.isBlank() ? null : nvv.classifier;
+        return nvv;
     }
 
     void resolveParents() {
@@ -437,14 +452,26 @@ public class Project {
         nvvsList.forEach(nvv -> resolveParent(nvv));
     }
 
+    Pattern p = Pattern.compile("\\$\\{([-a-zA-Z0-9_\\.]+)}");
+
     public NVV resolveGAV(NVV nvv) {
+        if (nvv.resolved) {
+            return nvv;
+        }
+
         NVV parentNvv = nvv.parent;
 
         if (parentNvv != null) {
             this.resolveGAV(parentNvv);
         }
 
-        if (nvv.name.contains("\\${")) {
+        NVV projectNvv = nvv.project;
+
+        if (projectNvv != null && !projectNvv.equals(nvv)) {
+            this.resolveGAV(projectNvv);
+        }
+
+        if (p.matcher(nvv.name).find()) {
             nvv.name = interpolate(nvv, nvv.name);
         }
 
@@ -452,13 +479,7 @@ public class Project {
             if (parentNvv != null) {
                 nvv.vendor = parentNvv.vendor;
             }
-        } else if (nvv.vendor.equalsIgnoreCase("${pom.groupId}")
-                || nvv.vendor.equalsIgnoreCase("${project.groupId}")
-                || nvv.vendor.equalsIgnoreCase("${project.parent.groupId}")) {
-            if (parentNvv != null) {
-                nvv.vendor = parentNvv.vendor;
-            }
-        } else if (nvv.vendor.contains("\\${")) {
+        } else if (p.matcher(nvv.vendor).find()) {
             nvv.vendor = interpolate(nvv, nvv.vendor);
         }
 
@@ -466,50 +487,92 @@ public class Project {
             if (parentNvv != null) {
                 nvv.version = parentNvv.version;
             }
-        } else if (nvv.version.equalsIgnoreCase("${pom.version}")
-                || nvv.version.equalsIgnoreCase("${project.version}")
-                || nvv.version.equalsIgnoreCase("${project.parent.version}")) {
-            if (parentNvv != null) {
-                nvv.version = parentNvv.version;
-            }
-        } else if (nvv.version.contains("\\${")) {
+        } else if (p.matcher(nvv.version).find()) {
             nvv.version = interpolate(nvv, nvv.version);
         }
 
         nvv.resolveVersion(nvv.version);
 
         nvv.resolved = true;
+
+        nvv.deps.forEach(nvv2 -> {
+            resolveGAV(nvv2);
+        });
+
         return nvv;
     }
 
     private String interpolate(NVV nvv, String value) {
-        log.info("int " + nvv.toString() + " " + value);
-        Pattern p = Pattern.compile("\\$\\{(.*)\\}");
         Matcher matcher = p.matcher(value);
-        if (matcher.matches()) {
+
+        StringBuffer output = new StringBuffer();
+
+        while (matcher.find()) {
             String name = matcher.group(1);
             String newValue = null;
-            if (nvv.properties.containsKey(name)) {
-                newValue = nvv.properties.get(name);
-                return newValue;
-            } else {
-                NVV parentNvv = nvv.parent;
 
-                if (parentNvv != null) {
-                    newValue = this.interpolate(parentNvv, value);
-                    if (newValue != null) {
-                        return newValue;
+            if (nvv.parent != null) {
+                if ("project.parent.groupId".equals(name)) {
+                    newValue = nvv.parent.vendor;
+                }
+                if ("project.parent.artifactId".equals(name)) {
+                    newValue = nvv.parent.name;
+                }
+                if ("project.parent.version".equals(name)) {
+                    newValue = nvv.parent.version;
+                }
+            }
+            if (nvv.project != null) {
+                if ("project.groupId".equals(name)) {
+                    newValue = nvv.project.vendor;
+                }
+                if ("project.artifactId".equals(name)) {
+                    newValue = nvv.project.name;
+                }
+                if ("project.version".equals(name)) {
+                    newValue = nvv.project.version;
+                }
+                if ("pom.groupId".equals(name)) {
+                    newValue = nvv.project.vendor;
+                }
+                if ("pom.artifactId".equals(name)) {
+                    newValue = nvv.project.name;
+                }
+                if ("pom.version".equals(name)) {
+                    newValue = nvv.project.version;
+                }
+            }
+
+            if (newValue == null) {
+                if (System.getProperties().containsKey(name)) {
+                    newValue = System.getProperties().getProperty(name);
+                } else if (nvv.properties.containsKey(name)) {
+                    newValue = nvv.properties.get(name);
+                } else if (nvv.project != null && nvv.project.properties.containsKey(name)) {
+                    newValue = nvv.project.properties.get(name);
+                } else {
+                    NVV parentNvv = nvv.parent;
+
+                    if (parentNvv != null) {
+                        newValue = this.interpolate(parentNvv, value);
                     }
                 }
             }
+
+            if (newValue != null) {
+                try {
+                    matcher.appendReplacement(output, newValue);
+                } catch (Exception x) {
+                    log.warning("warn int " + nvv.toString() + " " + value);
+                }
+            }
         }
-        if (nvv.path != null && !nvv.path.toString().endsWith(".pom")) {
-            log.warning("not resolved " + nvv + " " + value);
-        }
-        return value;
+        matcher.appendTail(output);
+        log.fine("int " + nvv.toString() + " " + output);
+        return output.toString();
     }
 
-    private String expandNVVRegex(String match) {
+    public static String expandNVVRegex(String match) {
         StringBuilder bob = new StringBuilder();
 
         if (match.length() == 0) {
@@ -537,7 +600,7 @@ public class Project {
             bob = new StringBuilder(".*" + match + ".*");
         }
 
-        log.finest("matching " + match + " " + bob.toString());
+        slog.finest("matching " + match + " " + bob.toString());
         return bob.toString();
     }
 
@@ -553,12 +616,7 @@ public class Project {
     }
 
     private boolean matchNVV(NVV nvv, Path path) {
-        try {
-            return matchNVV(nvv) && pathWatcher.matchFiles(path);
-        } catch (IOException ex) {
-            log.warning(ex.getMessage());
-            return false;
-        }
+        return matchNVV(nvv) && pathWatcher.matchFiles(path);
     }
 
     public boolean matchNVV(NVV nvv) {
@@ -599,11 +657,38 @@ public class Project {
 
     //return a project if the given project is in the dependency list of that project
     //or if that projects parent is the given project 
-    Stream<NVV> projectDepends(NVV nvv) {
+    public Stream<NVV> projectDepends(String nvv) {
+
+        return projects.entrySet().stream()
+                .flatMap(e -> e.getValue().stream())
+                .filter(e -> matchNVV(e, nvv) || parentDepends(e, nvv))
+                .map(e -> e);
+    }
+
+    public Stream<NVV> projectDepends(NVV nvv) {
 
         return projects.entrySet().stream()
                 .filter(e -> e.getValue().contains(nvv) || parentDepends(e.getKey(), nvv))
                 .map(e -> e.getKey());
+    }
+
+    public boolean projectDepends(NVV nvv, String dep) {
+        return projects.get(nvv).stream().anyMatch(n -> match(n, dep));
+    }
+
+    public boolean parentDepends(NVV root, String nvv) {
+        NVV parent = root.parent;
+
+        if (root.parent != null && matchNVV(root.parent, nvv)) {
+            return true;
+        } else if (parent != null) {
+            if (projectDepends(parent, nvv)) {
+                return true;
+            } else {
+                return parentDepends(parent, nvv);
+            }
+        }
+        return false;
     }
 
     private boolean parentDepends(NVV root, NVV nvv) {
@@ -621,8 +706,8 @@ public class Project {
         return false;
     }
 
-    boolean isPom(Path path) {
-        return this.pomFileNames.stream().filter(s -> path.toAbsolutePath().toString().matches(s) || path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+    public static boolean isPom(Path path) {
+        return pomFileNames.stream().filter(s -> path.toAbsolutePath().toString().matches(s) || path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
     }
 
     private NVV findPom(Path path) throws Exception {
@@ -726,6 +811,10 @@ public class Project {
                 return false;
             }
         }
+    }
+
+    Optional<NVV> getProject(NVV nvv) {
+        return Globals.buildIndex.stream().filter(n -> n.equals(nvv)).findFirst();
     }
 
 }

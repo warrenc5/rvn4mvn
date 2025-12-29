@@ -11,10 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.json.Json;
-import javax.json.JsonObject;
-import javax.json.JsonReader;
-import javax.json.JsonWriter;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonReader;
+import jakarta.json.JsonWriter;
 import javax.script.Bindings;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
@@ -33,9 +33,22 @@ public class RvnTest {
     public void commandTest() {
         String command = "0,1";
         Pattern re = Pattern.compile("([0-9]+)([`!])([0-9,\\-`]*)");
-
         Matcher matcher = re.matcher(command);
         if (!matcher.matches()) {
+            fail();
+        }
+        matcher = re.matcher("1-100");
+        if (!matcher.matches()) {
+            fail();
+        }
+
+        matcher = re.matcher("2,1-100");
+        if (!matcher.matches()) {
+            fail();
+        }
+
+        matcher = re.matcher("2a,1a-10a0");
+        if (matcher.matches()) {
             fail();
         }
     }

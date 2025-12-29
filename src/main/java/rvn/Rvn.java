@@ -13,9 +13,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
@@ -23,7 +21,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
-import static java.util.stream.Collectors.toList;
+import java.util.stream.Stream;
 import static rvn.Ansi.ANSI_BOLD;
 import static rvn.Ansi.ANSI_GREEN;
 import static rvn.Ansi.ANSI_RESET;
@@ -72,6 +70,8 @@ public class Rvn extends Thread {
         rvn.init();
         //Globals.locations.addAll(Arrays.asList(args).stream().filter(s -> !s.startsWith("!")).collect(toList()));
         rvn.start();
+        Globals.ps = new ProxyServer(8443);
+        Globals.ps.start(); //FIXME: close thread
         rvn.join();
         //Thread.sleep(5000);
         System.err.println(String.format("************** Exited ************************"));
@@ -116,21 +116,20 @@ public class Rvn extends Thread {
     public Rvn(String[] args) throws Exception {
         this();
 
-        Arrays.stream(args).map(arg -> Path.of(arg)).forEach(p -> {
-            try {
-                if (ConfigFactory.getInstance().isConfigFile(p)) {
-                    Globals.configs.add(p);
-                } else {
-                    if (p != null) {
+        Arrays.stream(args)
+                .flatMap(arg -> Stream.of(arg.split("\\s+")))
+                .map(Path::of)
+                .distinct()
+                .forEach(p -> {
+                    Path normalized = p.toAbsolutePath().normalize();
+                    if (ConfigFactory.getInstance().isConfigFile(p)) {
+                        Globals.configs.add(p);
+                    } else {
                         ConfigFactory.getInstance().scanForConfigs(p);
-                        log.info("adding " + p.toAbsolutePath().normalize().toString());
-                        Globals.locations.add(p.toAbsolutePath().normalize().toString());
+                        log.info("adding " + normalized);
+                        Globals.locations.add(normalized.toString());
                     }
-                }
-            } catch (IOException ex) {
-                Logger.getLogger(Rvn.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        });
+                });
 
     }
 
@@ -168,8 +167,9 @@ public class Rvn extends Thread {
         System.out.println("Running in " + Paths.get(".").toAbsolutePath().normalize().toString());
         ConfigFactory.getInstance().loadDefaultConfiguration();
         ConfigFactory.getInstance().addDefaultLocation();
-        project.updateIndex();
 
+        ConfigFactory.getInstance().scan();
+        project.updateIndex();
     }
 
     public Optional<String> getExtensionByStringHandling(String filename) {
@@ -237,6 +237,10 @@ public class Rvn extends Thread {
 
     public CommandProcessor getCommandHandler() {
         return this.commandProcessor;
+    }
+
+    public static void exit(int i) {
+        System.exit(1);
     }
 
 }

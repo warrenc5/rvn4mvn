@@ -1,6 +1,9 @@
 package rvn;
 
 import au.com.devnull.graalson.JsonObjectBindings;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonReader;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
@@ -25,9 +28,6 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import static java.util.stream.Collectors.toList;
 import java.util.stream.Stream;
-import javax.json.Json;
-import javax.json.JsonObject;
-import javax.json.JsonReader;
 import javax.script.Bindings;
 import javax.script.ScriptException;
 import static rvn.Ansi.ANSI_BOLD;
@@ -38,6 +38,7 @@ import static rvn.Globals.baseConfig;
 import static rvn.Globals.buildArtifact;
 import static rvn.Globals.configFileNames;
 import static rvn.Globals.locations;
+import static rvn.Globals.repositories;
 import static rvn.Globals.thenFinished;
 import static rvn.Globals.thenStarted;
 import static rvn.PathWatcher.keys;
@@ -233,7 +234,18 @@ public class ConfigFactory {
             locations.addAll(v.stream().filter(s -> !s.startsWith("!"))
                     .collect(toList()));
             log.fine(key + " " + locations.toString());
+        } else {
+            locations.add(System.getProperty("user.dir"));
         }
+        if (result.containsKey(key = "repositories")) {
+            List<String> v = (List) result.get(key);
+            repositories.addAll(v.stream().filter(s -> !s.startsWith("!"))
+                    .collect(toList()));
+            log.fine(key + " " + repositories.toString());
+        } else {
+            repositories.add(System.getProperty("user.home.dir")+"/.m2/repository");
+        }
+
         if (result.containsKey(key = "watchDirectories")) {
             Map v = (Map) result.get(key);
             if (v.containsKey("includes")) {
@@ -474,8 +486,10 @@ public class ConfigFactory {
             } else if (path.getFileName() != null && configFileNames.contains(path.getFileName().toString())) {
                 this.loadConfiguration(path);
             }
+        } catch (RuntimeException ex) {
+            Rvn.exit(1);
         } catch (IOException ex) {
-            log.info(String.format("register failed %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
+            log.info(String.format("register failed1 %1$s %2$s %3$s", path, ex.getClass().getName(), ex.getMessage()));
         }
     }
 
@@ -487,10 +501,14 @@ public class ConfigFactory {
         }
     }
 
-    public boolean isConfigFile(Path path) throws IOException {
+    public static boolean isConfigFile(Path path) {
         Config config = getConfig(path); //FIXME should return global config?
-        return (Files.exists(path) && config != null && Files.isSameFile(path, config.configPath))
-                || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+        try {
+            return (Files.exists(path) && config != null && Files.isSameFile(path, config.configPath))
+                    || configFileNames.stream().filter(s -> path.toAbsolutePath().toString().endsWith(s)).findFirst().isPresent();
+        } catch (IOException ex) {
+        }
+        return false;
     }
 
     private void createConfiguration(Path config) throws IOException {
@@ -528,7 +546,7 @@ public class ConfigFactory {
         return getConfig(path);
     }
 
-    public Config getConfig(Path path) {
+    public static Config getConfig(Path path) {
         Path configPath = findMaximumPathMatch(path);
         Config config = baseConfig.get(configPath);
         if (config == null) {
@@ -539,7 +557,7 @@ public class ConfigFactory {
         }
     }
 
-    private Path findMaximumPathMatch(Path path) {
+    private static Path findMaximumPathMatch(Path path) {
         int max = 0;
         Path result = null;
         for (Path key : baseConfig.keySet()) {
@@ -561,9 +579,6 @@ public class ConfigFactory {
     private void init() {
         thenStarted = Instant.now();
         thenFinished = Instant.now();
-    }
-
-    private void scan() {
     }
 
     public void toggleCommand(NVV nvv, String cmd) {
@@ -597,22 +612,51 @@ public class ConfigFactory {
     }
 
     void scanForConfigs(Path d) {
-        log.info("scanning path : "  + d);
-        if(d == null || d.toFile() == null || !d.toFile().isDirectory()) {
+        log.info("scanning path : " + d);
+        if (d == null || d.toFile() == null || !d.toFile().isDirectory()) {
             log.info("no path, use `realpath .`");
+
+            if (!d.toFile().isDirectory() || d.toFile().isFile()) {
+                d = d.getParent();
+            } else 
             try {
                 d = Path.of(".").toRealPath();
             } catch (IOException ex) {
                 throw new RuntimeException(new FileNotFoundException("no path"));
             }
         }
-        Arrays.stream(d
-                .toFile()
-                .listFiles())
+
+        Arrays.stream(d.toFile().listFiles())
                 .map(File::getAbsoluteFile)
                 .map(File::toPath)
                 .filter(this::isConfigFileSafe)
                 .forEach(Globals.configs::add);
+    }
+
+    public void scan() {
+        log.info("scanning for projects");
+        locations.stream().map(Path::of)
+                .forEach(this::scan);
+    }
+
+    private void scan(Path p) {
+        File[] files = p.toFile().listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            Path path = file.toPath();
+            if (file.isDirectory() && pathWatcher.matchDirectories(path)) {
+                scan(file.toPath());
+            } else if (pathWatcher.matchFiles(path)) {
+                if (ConfigFactory.getInstance().isConfigFile(file.toPath())) {
+                    Globals.configs.add(p);
+                } else if (Project.isPom(file.toPath())) {
+                    Globals.locations.add(file.getParentFile().getAbsolutePath());
+                    log.info("adding project" + file.getParent().toString());
+                }
+            }
+        }
     }
 
 }

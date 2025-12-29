@@ -1,10 +1,10 @@
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 import rvn.Edge;
@@ -35,12 +35,13 @@ public class BuildGraphTest {
                 new Edge(d, c),
                 new Edge(d, c),
                 new Edge(a, c),
+                new Edge(c, a),
                 new Edge(e, f),
                 new Edge(f, d),
                 new Edge(d, b),
                 new Edge(d, z),
-                new Edge(k, k),
-                new Edge(k, k)
+                new Edge(k, x),
+                new Edge(k, z)
         ));
 
         System.out.println("edges->" + edges.toString());
@@ -50,7 +51,7 @@ public class BuildGraphTest {
 
         System.out.println("graph->" + graph.toString());
 
-        List<NVV> roots = null;//graph.roots();
+        Collection<NVV> roots = graph.reduceG2Q();
         System.out.println("roots->" + roots);
 
         Assert.assertArrayEquals(new NVV[]{a, k}, roots.toArray(new NVV[roots.size()]));
